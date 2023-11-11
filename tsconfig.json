@@ -1,0 +1,33 @@
+{
+    "compilerOptions": {
+        "rootDir": "./src",
+        "baseUrl": "./src",
+        "types": [
+            "vite/client"
+        ],
+        "strictNullChecks": true,
+        "outDir": "lib",
+        "module": "esnext",
+        "target": "ESNext",
+        "lib": [
+            "ESNext"
+        ],
+        "declaration": true,
+        "moduleResolution": "node",
+        "allowSyntheticDefaultImports": true,
+        "esModuleInterop": true,
+        "noImplicitThis": true,
+        "skipLibCheck": true,
+        "noImplicitAny": false,
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true
+    },
+    "exclude": [
+        "node_modules",
+        "lib",
+        "examples",
+    ],
+    "include": [
+        "./src"
+    ],
+}

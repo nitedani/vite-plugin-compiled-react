@@ -1,0 +1,42 @@
+{
+    "name": "@nitedani/vite-plugin-compiled-react",
+    "version": "0.0.3",
+    "license": "MIT",
+    "type": "module",
+    "main": "lib/index.js",
+    "keywords": [
+        "@compiled/react",
+        "vite"
+    ],
+    "repository": {
+        "type": "github",
+        "url": "https://github.com/nitedani/vite-plugin-compiled-react"
+    },
+    "scripts": {
+        "build": "rimraf lib && tsc -b"
+    },
+    "exports": {
+        "import": "./lib/index.js"
+    },
+    "files": [
+        "lib"
+    ],
+    "dependencies": {
+        "@compiled/babel-plugin": "^0.24.3",
+        "@compiled/babel-plugin-strip-runtime": "^0.23.0",
+        "babel-plugin-module-resolver": "^5.0.0",
+        "fast-glob": "^3.3.2"
+    },
+    "peerDependencies": {
+        "vite": "*"
+    },
+    "devDependencies": {
+        "rimraf": "^3.0.2",
+        "typescript": "^5.2.2",
+        "@types/node": "^20.4.10"
+    },
+    "prettier": {
+        "singleQuote": true,
+        "arrowParens": "avoid"
+    }
+}

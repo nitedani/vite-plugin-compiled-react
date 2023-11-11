@@ -1,0 +1,12 @@
+node_modules
+.DS_Store
+dist
+*.local
+/out-tsc
+package-lock.json
+.turbo
+.pnpm*
+*.tsbuildinfo
+*.ts.timestamp*
+*Zone.Identifier
+lib
