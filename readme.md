@@ -18,8 +18,7 @@ Usage:
 import { compiled } from "@nitedani/vite-plugin-compiled-react";
 
 export default defineConfig({
-  // put compiled before react()
-  plugins: [compiled({ extract: true }), react()],
+  plugins: [react(), compiled({ extract: true })],
 });
 ```
 
