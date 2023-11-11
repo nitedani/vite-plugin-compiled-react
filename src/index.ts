@@ -1,6 +1,8 @@
 import fg from "fast-glob";
 import { rm } from "fs/promises";
 import { Plugin } from "vite"
+import t from "@babel/types";
+
 
 export type CompiledPluginExtractOptions = {
   /**
@@ -60,6 +62,8 @@ export type CompiledPluginOptions = {
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   let outDir = "";
   let root = "";
+  
+  const importDeclaration = t.importDeclaration([], t.stringLiteral('@compiled/react'));
   const { extract, ...baseOptions } = options
   return {
     name: "@nitedani/compiled-react-plugin",
@@ -76,18 +80,16 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       outDir = config.build.outDir;
       root = config.root;
     },
-    transform(code, id, options) {
-      if (/node_modules/.test(id)) {
-        return;
-      }
-      if (/\.[jt]sx$/.test(id)) {
-        code = 'import {} from "@compiled/react";\n' + code;
-        return code;
-      }
-    },
     api: {
       reactBabel(babelConfig, context, config) {
         const alias = config.resolve.alias;
+        babelConfig.plugins.push({
+          visitor: {
+            Program(root){
+              root.unshiftContainer('body', importDeclaration);
+            }
+          }
+        })
         babelConfig.plugins.push(["babel-plugin-module-resolver", { alias }]);
         babelConfig.plugins.push(["@compiled/babel-plugin", baseOptions]);
         if (config.command === "build" && options.extract) {

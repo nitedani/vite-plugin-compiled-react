@@ -1,6 +1,7 @@
 lockfileVersion: 5.4
 
 specifiers:
+  '@babel/types': ^7.23.3
   '@compiled/babel-plugin': ^0.24.3
   '@compiled/babel-plugin-strip-runtime': ^0.23.0
   '@types/node': ^20.4.10
@@ -11,6 +12,7 @@ specifiers:
   vite: '*'
 
 dependencies:
+  '@babel/types': 7.23.3
   '@compiled/babel-plugin': 0.24.3
   '@compiled/babel-plugin-strip-runtime': 0.23.0
   babel-plugin-module-resolver: 5.0.0
