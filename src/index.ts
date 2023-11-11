@@ -86,7 +86,14 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         babelConfig.plugins.push({
           visitor: {
             Program(root){
-              root.unshiftContainer('body', importDeclaration);
+              //@ts-ignore
+              if (/node_modules/.test(this.filename)) {
+                return;
+              }
+              //@ts-ignore
+              if (/\.[jt]sx$/.test(this.filename)) {
+                root.unshiftContainer('body', importDeclaration);
+              }
             }
           }
         })
