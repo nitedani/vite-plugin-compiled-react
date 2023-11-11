@@ -18,15 +18,12 @@ Usage:
 import { compiled } from "@nitedani/vite-plugin-compiled-react";
 
 export default defineConfig({
-  plugins: [react(), compiled({ extract: true })],
+  // put compiled before react()
+  plugins: [compiled({ extract: true }), react()],
 });
 ```
 
-#### For the css props to work, you need to `import "@compiled/react";` on top of the file where you use the css prop.
-
 ```tsx
-import "@compiled/react";
-
 const Component = () => (
   <div
     css={{

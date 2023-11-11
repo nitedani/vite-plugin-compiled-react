@@ -63,6 +63,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const { extract, ...baseOptions } = options
   return {
     name: "@nitedani/compiled-react-plugin",
+    enforce: "pre",
     config(config, env) {
       return {
         ssr: {
@@ -74,6 +75,15 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
     configResolved(config) {
       outDir = config.build.outDir;
       root = config.root;
+    },
+    transform(code, id, options) {
+      if (/node_modules/.test(id)) {
+        return;
+      }
+      if (/\.[jt]sx$/.test(id)) {
+        code = 'import {} from "@compiled/react";\n' + code;
+        return code;
+      }
     },
     api: {
       reactBabel(babelConfig, context, config) {
