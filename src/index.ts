@@ -24,13 +24,6 @@ export type CompiledPluginExtractOptions = {
 
 export type CompiledPluginOptions = {
   /**
-  Will import React into the module if it is not found.
-  When using \@babel/preset-react with the automatic runtime this is not needed and can be set to false.
-  Defaults to true.
-  */
-
-  importReact?: boolean;
-  /**
   Will cache the result of statically evaluated imports.
   true will cache for the duration of the node process
   'single-pass' will cache for a single pass of a file
@@ -62,7 +55,7 @@ export type CompiledPluginOptions = {
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   let outDir = "";
   let root = "";
-  
+
   const importDeclaration = t.importDeclaration([], t.stringLiteral('@compiled/react'));
   const { extract, ...baseOptions } = options
   return {
@@ -85,7 +78,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         const alias = config.resolve.alias;
         babelConfig.plugins.push({
           visitor: {
-            Program(root){
+            Program(root) {
               //@ts-ignore
               if (/node_modules/.test(this.filename)) {
                 return;
@@ -98,7 +91,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           }
         })
         babelConfig.plugins.push(["babel-plugin-module-resolver", { alias }]);
-        babelConfig.plugins.push(["@compiled/babel-plugin", baseOptions]);
+        babelConfig.plugins.push(["@compiled/babel-plugin", { importReact: false, ...baseOptions }]);
         if (config.command === "build" && options.extract) {
           babelConfig.plugins.push([
             "@compiled/babel-plugin-strip-runtime",
