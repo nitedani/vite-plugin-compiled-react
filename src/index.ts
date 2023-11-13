@@ -1,8 +1,10 @@
+import t from "@babel/types";
+import compiledPlugin from "@compiled/babel-plugin";
+import compiledStripRuntimePlugin from "@compiled/babel-plugin-strip-runtime";
+import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import fg from "fast-glob";
 import { rm } from "fs/promises";
-import { Plugin } from "vite"
-import t from "@babel/types";
-
+import { Plugin } from "vite";
 
 export type CompiledPluginExtractOptions = {
   /**
@@ -90,11 +92,11 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             }
           }
         })
-        babelConfig.plugins.push(["babel-plugin-module-resolver", { alias }]);
-        babelConfig.plugins.push(["@compiled/babel-plugin", { importReact: false, ...baseOptions }]);
+        babelConfig.plugins.push([moduleResolverPlugin, { alias }]);
+        babelConfig.plugins.push([compiledPlugin, { importReact: false, ...baseOptions }]);
         if (config.command === "build" && options.extract) {
           babelConfig.plugins.push([
-            "@compiled/babel-plugin-strip-runtime",
+            compiledStripRuntimePlugin,
             typeof options.extract === "object" ? options.extract : { extractStylesToDirectory: { source: root, dest: "" } },
           ]);
         }
