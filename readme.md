@@ -36,15 +36,4 @@ const Component = () => (
   </div>
 );
 ```
-Typescript:
-```ts
-// types.d.ts
-import { CssFunction } from "@compiled/react";
-export { };
-declare module "react" {
-  interface HTMLAttributes<T> extends AriaAttributes, DOMAttributes<T> {
-    // extends React's HTMLAttributes
-    css?: CssFunction | CssFunction[]
-  }
-}
-```
+Typescript should work out of the box.
