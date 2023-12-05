@@ -10,7 +10,8 @@
         "module": "esnext",
         "target": "ESNext",
         "lib": [
-            "ESNext"
+            "DOM",
+            "ESNext",
         ],
         "declaration": true,
         "moduleResolution": "node",

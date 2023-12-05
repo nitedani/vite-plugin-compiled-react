@@ -1,6 +1,6 @@
 {
-    "name": "@nitedani/vite-plugin-compiled-react",
-    "version": "0.0.9",
+    "name": "vite-plugin-compiled-react",
+    "version": "0.0.12",
     "license": "MIT",
     "type": "module",
     "main": "lib/index.js",
@@ -23,18 +23,23 @@
     ],
     "dependencies": {
         "@babel/types": "^7.23.3",
-        "@compiled/babel-plugin": "^0.24.3",
-        "@compiled/babel-plugin-strip-runtime": "^0.23.0",
+        "@compiled/babel-plugin": "^0.26.1",
+        "@compiled/babel-plugin-strip-runtime": "^0.25.0",
         "babel-plugin-module-resolver": "^5.0.0",
         "fast-glob": "^3.3.2"
     },
     "peerDependencies": {
-        "vite": "*"
+        "vite": "*",
+        "@compiled/react": "*",
+        "@vitejs/plugin-react": "*"
     },
     "devDependencies": {
+        "@compiled/react": "^0.16.4",
         "@types/node": "^20.4.10",
         "rimraf": "^3.0.2",
-        "typescript": "^5.2.2"
+        "typescript": "^5.2.2",
+        "@types/react": "^18.2.0",
+        "@vitejs/plugin-react": "^4.2.1"
     },
     "prettier": {
         "singleQuote": true,

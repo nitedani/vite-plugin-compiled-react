@@ -1,28 +1,29 @@
-import t from "@babel/types";
-import compiledPlugin from "@compiled/babel-plugin";
-import compiledStripRuntimePlugin from "@compiled/babel-plugin-strip-runtime";
+import t from '@babel/types';
+import compiledPlugin from '@compiled/babel-plugin';
+import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
-import fg from "fast-glob";
-import { rm } from "fs/promises";
-import { Plugin } from "vite";
+import fg from 'fast-glob';
+import { rm } from 'fs/promises';
+import type { Plugin } from 'vite';
+import type { ReactBabelOptions } from '@vitejs/plugin-react';
 
 export type CompiledPluginExtractOptions = {
   /**
   Will callback at the end of a file pass with all found style rules.
   */
-  onFoundStyleRules?: (rules: string[]) => void
+  onFoundStyleRules?: (rules: string[]) => void;
 
   /**
   When set will prevent additional require (one import per rule) in the bundle and add style rules to meta data. This could be used when enabling style sheet extraction in a different configuration for SSR.
   Defaults to false.
    */
-  compiledRequireExclude?: boolean
+  compiledRequireExclude?: boolean;
 
   /**
   When set, extracts styles to an external CSS file. This is beneficial for building platform components that are to be published on NPM.
    */
   extractStylesToDirectory?: { source: string; dest: string };
-}
+};
 
 export type CompiledPluginOptions = {
   /**
@@ -32,7 +33,7 @@ export type CompiledPluginOptions = {
   false turns caching off
   Defaults to true.
    */
-  cache?: boolean | 'single-pass'
+  cache?: boolean | 'single-pass';
 
   /**  
   Will run additional cssnano plugins to normalize CSS during build.
@@ -43,26 +44,29 @@ export type CompiledPluginOptions = {
   /**
   Will callback at the end of a file pass with all imported files that were statically evaluated into the file.
   */
-  onIncludedFiles?: (files: string[]) => void
+  onIncludedFiles?: (files: string[]) => void;
 
   /**
   Add the component name as class name to DOM in non-production environment if styled is used.
   Default to false
    */
-  addComponentName?: boolean
+  addComponentName?: boolean;
 
-  extract?: boolean | CompiledPluginExtractOptions
-}
+  extract?: boolean | CompiledPluginExtractOptions;
+};
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
-  let outDir = "";
-  let root = "";
+  let outDir = '';
+  let root = '';
 
-  const importDeclaration = t.importDeclaration([], t.stringLiteral('@compiled/react'));
-  const { extract, ...baseOptions } = options
+  const importDeclaration = t.importDeclaration(
+    [],
+    t.stringLiteral('@compiled/react')
+  );
+  const { extract, ...baseOptions } = options;
   return {
-    name: "@nitedani/compiled-react-plugin",
-    enforce: "pre",
+    name: '@nitedani/compiled-react-plugin',
+    enforce: 'pre',
     config(config, env) {
       return {
         ssr: {
@@ -76,34 +80,40 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       root = config.root;
     },
     api: {
-      reactBabel(babelConfig, context, config) {
+      reactBabel(babelConfig: ReactBabelOptions, context, config) {
         const alias = config.resolve.alias;
         babelConfig.plugins.push({
           visitor: {
             Program(root) {
-              //@ts-ignore
-              if (/node_modules/.test(this.filename)) {
+              if (
+                /node_modules/.test(this.filename) ||
+                /extractAssets/.test(this.filename)
+              ) {
                 return;
               }
-              //@ts-ignore
               if (/\.[jt]sx$/.test(this.filename)) {
                 root.unshiftContainer('body', importDeclaration);
               }
-            }
-          }
-        })
+            },
+          },
+        });
         babelConfig.plugins.push([moduleResolverPlugin, { alias }]);
-        babelConfig.plugins.push([compiledPlugin, { importReact: false, ...baseOptions }]);
-        if (config.command === "build" && options.extract) {
+        babelConfig.plugins.push([
+          compiledPlugin,
+          { importReact: false, ...baseOptions },
+        ]);
+        if (config.command === 'build' && options.extract) {
           babelConfig.plugins.push([
             compiledStripRuntimePlugin,
-            typeof options.extract === "object" ? options.extract : { extractStylesToDirectory: { source: root, dest: "" } },
+            typeof options.extract === 'object'
+              ? options.extract
+              : { extractStylesToDirectory: { source: root, dest: '' } },
           ]);
         }
       },
     },
     async buildEnd() {
-      const entries = await fg(["./**/*.compiled.css"], {
+      const entries = await fg(['./**/*.compiled.css'], {
         ignore: [`${outDir}/**`],
         followSymbolicLinks: false,
       });
