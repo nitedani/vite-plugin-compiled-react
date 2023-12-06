@@ -96,7 +96,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           compiledPlugin,
           { importReact: false, ...baseOptions },
         ]);
-        if (config.command === 'build' && options.extract) {
+        if (options.extract) {
           babelConfig.plugins.push([
             compiledStripRuntimePlugin,
             { compiledRequireExclude: true },
