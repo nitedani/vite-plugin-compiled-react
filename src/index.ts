@@ -32,7 +32,7 @@ export type CompiledPluginOptions = {
    */
   addComponentName?: boolean;
 
-  extract?: boolean;
+  extract?: { build: boolean; serve: boolean } | boolean;
 };
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
@@ -47,11 +47,13 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
     t.stringLiteral('@compiled/react')
   );
   const { extract, ...baseOptions } = options;
+  let command = '';
 
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
     config(config, env) {
+      command = env.command;
       return {
         ssr: {
           // https://github.com/vikejs/vike/issues/621
@@ -96,7 +98,12 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           compiledPlugin,
           { importReact: false, ...baseOptions },
         ]);
-        if (options.extract) {
+        if (
+          options.extract &&
+          (options.extract === true ||
+            (command === 'serve' && options.extract.serve) ||
+            (command === 'build' && options.extract.build))
+        ) {
           babelConfig.plugins.push([
             compiledStripRuntimePlugin,
             { compiledRequireExclude: true },
