@@ -1,9 +1,10 @@
 import t from '@babel/types';
 import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
-import moduleResolverPlugin from 'babel-plugin-module-resolver';
-import type { Plugin } from 'vite';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
+import moduleResolverPlugin from 'babel-plugin-module-resolver';
+import { createHash } from 'crypto';
+import type { Plugin } from 'vite';
 
 export type CompiledPluginOptions = {
   /**
@@ -36,10 +37,11 @@ export type CompiledPluginOptions = {
 };
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
-  const virtualCssFiles = new Map();
-  const generateUniqueShortId = () => {
-    return '_' + Math.random().toString(36).substring(2, 9);
+  const hash = (code: string) => {
+    return createHash('md5').update(code).digest('hex').substring(2, 9);
   };
+
+  const virtualCssFiles = new Map();
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
   const importDeclaration = t.importDeclaration(
@@ -115,7 +117,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
                 exit(path, { file }) {
                   const styleRules = file.metadata.styleRules;
                   if (styleRules.length) {
-                    const fileId = generateUniqueShortId() + '.css';
+                    const code = styleRules.join('\n');
+                    const fileId = hash(code) + '.css';
                     virtualCssFiles.set(fileId, styleRules.join('\n'));
                     path.unshiftContainer(
                       'body',
