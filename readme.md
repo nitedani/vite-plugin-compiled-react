@@ -1,7 +1,13 @@
 # vite-plugin-compiled-react
 
-Vite plugin for https://github.com/atlassian-labs/compiled<br>
-PostCSS config is supported when `extract: true`
+Vite plugin for https://github.com/atlassian-labs/compiled
+
+PostCSS config is supported when extraction is enabled.<br>
+CSS extraction can be enabled for `build` and `serve` separately.<br>
+`extract: { build: true, serve: true }`<br>
+or a shorthand `extract: true`
+
+Your SSR framework may not support preloading extracted CSS in development mode.
 
 Usage:
 ```
