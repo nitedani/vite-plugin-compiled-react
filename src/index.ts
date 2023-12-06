@@ -72,7 +72,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     load(id) {
-      if (id.startsWith(virtualCssFileName)) {
+      if (id.includes(virtualCssFileName)) {
         const fileId = id.split(':').pop();
         return virtualCssFiles.get(fileId);
       }
