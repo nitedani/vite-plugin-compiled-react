@@ -7,24 +7,6 @@ import { rm } from 'fs/promises';
 import type { Plugin } from 'vite';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
 
-export type CompiledPluginExtractOptions = {
-  /**
-  Will callback at the end of a file pass with all found style rules.
-  */
-  onFoundStyleRules?: (rules: string[]) => void;
-
-  /**
-  When set will prevent additional require (one import per rule) in the bundle and add style rules to meta data. This could be used when enabling style sheet extraction in a different configuration for SSR.
-  Defaults to false.
-   */
-  compiledRequireExclude?: boolean;
-
-  /**
-  When set, extracts styles to an external CSS file. This is beneficial for building platform components that are to be published on NPM.
-   */
-  extractStylesToDirectory?: { source: string; dest: string };
-};
-
 export type CompiledPluginOptions = {
   /**
   Will cache the result of statically evaluated imports.
@@ -52,20 +34,26 @@ export type CompiledPluginOptions = {
    */
   addComponentName?: boolean;
 
-  extract?: boolean | CompiledPluginExtractOptions;
+  extract?: boolean;
 };
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   let outDir = '';
-  let root = '';
 
+  const virtualCssFiles = new Map();
+  const generateUniqueShortId = () => {
+    return '_' + Math.random().toString(36).substring(2, 9);
+  };
+
+  const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
   const importDeclaration = t.importDeclaration(
     [],
     t.stringLiteral('@compiled/react')
   );
   const { extract, ...baseOptions } = options;
+
   return {
-    name: '@nitedani/compiled-react-plugin',
+    name: 'vite-plugin-compiled-react',
     enforce: 'pre',
     config(config, env) {
       return {
@@ -77,7 +65,17 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
     },
     configResolved(config) {
       outDir = config.build.outDir;
-      root = config.root;
+    },
+    resolveId(source, importer, options) {
+      if (source.startsWith(virtualCssFileName)) {
+        return '\0' + source;
+      }
+    },
+    load(id) {
+      if (id.startsWith(virtualCssFileName)) {
+        const fileId = id.split(':').pop();
+        return virtualCssFiles.get(fileId);
+      }
     },
     api: {
       reactBabel(babelConfig: ReactBabelOptions, context, config) {
@@ -105,10 +103,29 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         if (config.command === 'build' && options.extract) {
           babelConfig.plugins.push([
             compiledStripRuntimePlugin,
-            typeof options.extract === 'object'
-              ? options.extract
-              : { extractStylesToDirectory: { source: root, dest: '' } },
+            { compiledRequireExclude: true },
           ]);
+
+          babelConfig.plugins.push({
+            visitor: {
+              Program: {
+                exit(path, { file }) {
+                  const styleRules = file.metadata.styleRules;
+                  if (styleRules.length) {
+                    const fileId = generateUniqueShortId() + '.css';
+                    virtualCssFiles.set(fileId, styleRules.join('\n'));
+                    path.unshiftContainer(
+                      'body',
+                      t.importDeclaration(
+                        [],
+                        t.stringLiteral(`${virtualCssFileName}:${fileId}`)
+                      )
+                    );
+                  }
+                },
+              },
+            },
+          });
         }
       },
     },

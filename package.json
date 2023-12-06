@@ -1,6 +1,6 @@
 {
     "name": "vite-plugin-compiled-react",
-    "version": "0.0.12",
+    "version": "1.0.0",
     "license": "MIT",
     "type": "module",
     "main": "lib/index.js",
