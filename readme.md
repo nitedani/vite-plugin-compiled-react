@@ -1,15 +1,7 @@
 # vite-plugin-compiled-react
 
 Vite plugin for https://github.com/atlassian-labs/compiled
-
-```css
-input
-css={{ color: "light-dark(green,red)"}}
-
-output
-._syaz1602{color:green}[data-mantine-color-scheme=dark]
-._syaz1602{color:red}
-```
+PostCSS config is supported
 
 Usage:
 ```
