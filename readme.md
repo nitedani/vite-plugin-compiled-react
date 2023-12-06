@@ -1,7 +1,7 @@
 # vite-plugin-compiled-react
 
-Vite plugin for https://github.com/atlassian-labs/compiled
-PostCSS config is supported
+Vite plugin for https://github.com/atlassian-labs/compiled<br>
+PostCSS config is supported when `extract: true`
 
 Usage:
 ```
