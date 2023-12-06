@@ -2,8 +2,6 @@ import t from '@babel/types';
 import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
-import fg from 'fast-glob';
-import { rm } from 'fs/promises';
 import type { Plugin } from 'vite';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
 
@@ -38,8 +36,6 @@ export type CompiledPluginOptions = {
 };
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
-  let outDir = '';
-
   const virtualCssFiles = new Map();
   const generateUniqueShortId = () => {
     return '_' + Math.random().toString(36).substring(2, 9);
@@ -62,9 +58,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           noExternal: [/@compiled\/react/],
         },
       };
-    },
-    configResolved(config) {
-      outDir = config.build.outDir;
     },
     resolveId(source, importer, options) {
       if (source.startsWith(virtualCssFileName)) {
@@ -128,15 +121,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           });
         }
       },
-    },
-    async buildEnd() {
-      const entries = await fg(['./**/*.compiled.css'], {
-        ignore: [`${outDir}/**`],
-        followSymbolicLinks: false,
-      });
-      for (const e of entries) {
-        rm(e);
-      }
     },
   };
 };
