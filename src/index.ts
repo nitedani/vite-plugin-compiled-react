@@ -2,7 +2,6 @@ import t from '@babel/types';
 import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
-import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
 import type { Plugin } from 'vite';
 
@@ -78,8 +77,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     api: {
-      reactBabel(babelConfig: ReactBabelOptions, context, config) {
-        const alias = config.resolve.alias;
+      reactBabel(babelConfig: ReactBabelOptions) {
         babelConfig.plugins.push({
           visitor: {
             Program(root) {
@@ -95,7 +93,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             },
           },
         });
-        babelConfig.plugins.push([moduleResolverPlugin, { alias }]);
         babelConfig.plugins.push([
           compiledPlugin,
           { importReact: false, ...baseOptions },
