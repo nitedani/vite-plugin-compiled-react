@@ -50,7 +50,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   );
   const { extract, ...baseOptions } = options;
   let command = '';
-
+  let root: string;
+  const moduleResolverPluginAlias = {};
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
@@ -62,6 +63,25 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           noExternal: [/@compiled\/react/],
         },
       };
+    },
+    configResolved(config) {
+      root = config.root;
+      if (!Array.isArray(config.resolve.alias)) {
+        return;
+      }
+      for (const e of config.resolve.alias) {
+        const find = e.find;
+        let replacement = e.replacement;
+        if (find && replacement) {
+          if (typeof replacement !== 'string' || typeof find !== 'string') {
+            continue;
+          }
+          if (replacement.split('/').length > 2) {
+            replacement = replacement.replace(root, '.');
+          }
+          moduleResolverPluginAlias[find] = replacement;
+        }
+      }
     },
     resolveId(source, importer, options) {
       if (source.startsWith(virtualCssFileName)) {
@@ -78,8 +98,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     api: {
-      reactBabel(babelConfig: ReactBabelOptions, context, config) {
-        const alias = config.resolve.alias;
+      reactBabel(babelConfig: ReactBabelOptions) {
         babelConfig.plugins.push({
           visitor: {
             Program(root) {
@@ -95,7 +114,13 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             },
           },
         });
-        babelConfig.plugins.push([moduleResolverPlugin, { alias }]);
+
+        babelConfig.plugins.push([
+          moduleResolverPlugin,
+          { root, alias: moduleResolverPluginAlias },
+        ]);
+
+        babelConfig.plugins.push([moduleResolverPlugin]);
         babelConfig.plugins.push([
           compiledPlugin,
           { importReact: false, ...baseOptions },
