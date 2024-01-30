@@ -1,6 +1,6 @@
 {
     "name": "vite-plugin-compiled-react",
-    "version": "1.1.0",
+    "version": "1.0.8",
     "license": "MIT",
     "type": "module",
     "main": "lib/index.js",
@@ -24,7 +24,8 @@
     "dependencies": {
         "@babel/types": "^7.23.3",
         "@compiled/babel-plugin": "^0.26.1",
-        "@compiled/babel-plugin-strip-runtime": "^0.25.0"
+        "@compiled/babel-plugin-strip-runtime": "^0.25.0",
+        "babel-plugin-module-resolver": "^5.0.0"
     },
     "peerDependencies": {
         "vite": "*",
