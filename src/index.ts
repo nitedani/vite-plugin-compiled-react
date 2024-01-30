@@ -119,8 +119,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           moduleResolverPlugin,
           { root, alias: moduleResolverPluginAlias },
         ]);
-
-        babelConfig.plugins.push([moduleResolverPlugin]);
         babelConfig.plugins.push([
           compiledPlugin,
           { importReact: false, ...baseOptions },
