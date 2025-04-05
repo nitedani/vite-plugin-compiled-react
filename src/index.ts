@@ -96,6 +96,18 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         }
         return virtualCssFiles.get(fileId);
       }
+
+      if (
+        (this.environment.config.resolve.conditions.includes('react-server') ||
+          this.environment.name === 'rsc') &&
+        /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
+      ) {
+        return `export default {};
+                export const useCache = () => {
+                  throw new Error("Please set extract: true in compiled plugin options for RSC support");
+                };
+                `;
+      }
     },
     api: {
       reactBabel(babelConfig: ReactBabelOptions) {
