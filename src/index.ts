@@ -36,12 +36,12 @@ export type CompiledPluginOptions = {
   extract?: { build: boolean; serve: boolean } | boolean;
 };
 
+const virtualCssFiles = new Map();
+
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const hash = (code: string) => {
     return createHash('md5').update(code).digest('hex').substring(2, 9);
   };
-
-  const virtualCssFiles = new Map();
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
   const importDeclaration = t.importDeclaration(
@@ -86,6 +86,24 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
     resolveId(source, importer, options) {
       if (source.startsWith(virtualCssFileName)) {
         return '\0' + source;
+      }
+    },
+    hotUpdate() {
+      for (const cssId of virtualCssFiles.keys()) {
+        const ids = `\0${virtualCssFileName}:${cssId}`;
+        const mod = this.environment.moduleGraph.getModuleById(ids);
+        if (!mod) {
+          return;
+        }
+        const importerSet = new Set([mod]);
+        for (const el of importerSet) {
+          for (const e of el.importers) {
+            importerSet.add(e);
+          }
+        }
+        for (const el of importerSet) {
+          this.environment.moduleGraph.invalidateModule(el);
+        }
       }
     },
     load(id) {
