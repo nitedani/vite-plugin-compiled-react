@@ -1,0 +1,3 @@
+packages:
+  - 'vite-plugin-compiled-react'
+  - 'example'

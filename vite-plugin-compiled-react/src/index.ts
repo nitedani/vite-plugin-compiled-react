@@ -4,7 +4,7 @@ import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
-import type { Plugin } from 'vite';
+import { EnvironmentModuleNode, type Plugin } from 'vite';
 
 export type CompiledPluginOptions = {
   /**
@@ -88,22 +88,40 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         return '\0' + source;
       }
     },
-    hotUpdate() {
+    hotUpdate(ctx) {
+      const originalMods = new Set<EnvironmentModuleNode>();
+      for (const mod of ctx.modules) {
+        originalMods.add(mod);
+        for (const importer of mod.importers) {
+          originalMods.add(importer);
+        }
+      }
+
+      const virtualCssImporterMods = new Set<EnvironmentModuleNode>();
       for (const cssId of virtualCssFiles.keys()) {
         const ids = `\0${virtualCssFileName}:${cssId}`;
         const mod = this.environment.moduleGraph.getModuleById(ids);
         if (!mod) {
-          return;
+          continue;
         }
-        const importerSet = new Set([mod]);
-        for (const el of importerSet) {
-          for (const e of el.importers) {
-            importerSet.add(e);
+        virtualCssImporterMods.add(mod);
+        for (const importer of mod.importers) {
+          virtualCssImporterMods.add(importer);
+        }
+      }
+
+      const modsToInvalidate = new Set<EnvironmentModuleNode>();
+      for (const mod of originalMods) {
+        if (virtualCssImporterMods.has(mod)) {
+          modsToInvalidate.add(mod);
+          for (const importer of mod.importers) {
+            modsToInvalidate.add(importer);
           }
         }
-        for (const el of importerSet) {
-          this.environment.moduleGraph.invalidateModule(el);
-        }
+      }
+
+      for (const mod of modsToInvalidate) {
+        this.environment.moduleGraph.invalidateModule(mod);
       }
     },
     load(id) {
