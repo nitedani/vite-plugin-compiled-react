@@ -44,6 +44,9 @@ importers:
 
   vite-plugin-compiled-react:
     dependencies:
+      '@babel/core':
+        specifier: ^7.26.10
+        version: 7.26.10
       '@babel/types':
         specifier: ^7.27.0
         version: 7.27.0
@@ -63,6 +66,9 @@ importers:
       '@compiled/react':
         specifier: ^0.18.3
         version: 0.18.3(react@19.1.0)
+      '@types/babel__core':
+        specifier: 7.20.5
+        version: 7.20.5
       '@types/node':
         specifier: ^22.14.0
         version: 22.14.0

@@ -14,7 +14,8 @@
     },
     "scripts": {
         "build": "rimraf lib && tsc -b && cat src/types.d.ts >> lib/index.d.ts",
-        "dev": "tsc -w"
+        "dev": "tsc -w",
+        "test": "pnpm build && node --test test/*.test.mjs"
     },
     "exports": {
         "import": "./lib/index.js"
@@ -23,6 +24,7 @@
         "lib"
     ],
     "dependencies": {
+        "@babel/core": "^7.26.10",
         "@babel/types": "^7.27.0",
         "@compiled/babel-plugin": "^0.37.1",
         "@compiled/babel-plugin-strip-runtime": "^0.37.1",
@@ -35,6 +37,7 @@
     },
     "devDependencies": {
         "@compiled/react": "^0.18.3",
+        "@types/babel__core": "7.20.5",
         "@types/node": "^22.14.0",
         "rimraf": "^6.0.1",
         "typescript": "^5.8.3",

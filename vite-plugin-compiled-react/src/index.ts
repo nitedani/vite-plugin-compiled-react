@@ -2,10 +2,9 @@ import t from '@babel/types';
 import babel from '@babel/core';
 import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
-import type { ReactBabelOptions } from '@vitejs/plugin-react';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
-import { EnvironmentModuleNode, type Plugin } from 'vite';
+import { createFilter, EnvironmentModuleNode, type Plugin } from 'vite';
 
 export type CompiledPluginOptions = {
   /**
@@ -38,8 +37,10 @@ export type CompiledPluginOptions = {
 };
 
 const virtualCssFiles = new Map();
+const defaultIncludeRE = /\.[tj]sx?$/;
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
+  const filter = createFilter(defaultIncludeRE);
   const hash = (code: string) => {
     return createHash('md5').update(code).digest('hex').substring(2, 9);
   };
@@ -90,16 +91,10 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         {
           visitor: {
             Program(root) {
-              if (
-                /node_modules/.test(this.filename) ||
-                /extractAssets/.test(this.filename)
-              ) {
+              if (/extractAssets/.test(this.filename)) {
                 return;
               }
-              if (/\.[jt]sx$/.test(this.filename)) {
-                
-                root.unshiftContainer('body', importDeclaration);
-              }
+              root.unshiftContainer('body', importDeclaration);
             },
           },
         },
@@ -204,12 +199,25 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     async transform(code, id) {
-      if (!/\.[jt]sx$/.test(id)) {
+      // Keep the same default boundary as @vitejs/plugin-react: dependencies are excluded, the
+      // query is stripped before filtering, and plain .js/.ts files are eligible as well.
+      if (id.includes('/node_modules/')) {
         return;
       }
-
+      const [filepath] = id.split('?');
+      if (!filepath || !filter(filepath)) {
+        return;
+      }
+      if (
+        !filepath.endsWith('x') &&
+        !code.includes("'@compiled/react'") &&
+        !code.includes('"@compiled/react"')
+      ) {
+        return;
+      }
       const res = await babel.transformAsync(code, {
         filename: id,
+        sourceFileName: filepath,
         sourceMaps: true,
         plugins,
         // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
