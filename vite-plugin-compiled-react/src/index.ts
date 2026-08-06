@@ -1,4 +1,5 @@
 import t from '@babel/types';
+import babel from '@babel/core';
 import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import type { ReactBabelOptions } from '@vitejs/plugin-react';
@@ -52,6 +53,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   let command = '';
   let root: string;
   const moduleResolverPluginAlias = {};
+  let plugins: babel.PluginItem[] = [];
+
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
@@ -81,6 +84,61 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           }
           moduleResolverPluginAlias[find] = replacement;
         }
+      }
+
+      plugins = [
+        {
+          visitor: {
+            Program(root) {
+              if (
+                /node_modules/.test(this.filename) ||
+                /extractAssets/.test(this.filename)
+              ) {
+                return;
+              }
+              if (/\.[jt]sx$/.test(this.filename)) {
+                
+                root.unshiftContainer('body', importDeclaration);
+              }
+            },
+          },
+        },
+        [moduleResolverPlugin, { root, alias: moduleResolverPluginAlias }],
+        [compiledPlugin, { importReact: false, ...baseOptions }],
+      ];
+
+      if (
+        options.extract &&
+        (options.extract === true ||
+          (command === 'serve' && options.extract.serve) ||
+          (command === 'build' && options.extract.build))
+      ) {
+        plugins.push([
+          compiledStripRuntimePlugin,
+          { compiledRequireExclude: true },
+        ]);
+
+        plugins.push({
+          visitor: {
+            Program: {
+              exit(path, { file }) {
+                const styleRules = file.metadata.styleRules;
+                if (styleRules.length) {
+                  const code = styleRules.join('\n');
+                  const fileId = hash(code) + '.css';
+                  virtualCssFiles.set(fileId, styleRules.join('\n'));
+                  path.unshiftContainer(
+                    'body',
+                    t.importDeclaration(
+                      [],
+                      t.stringLiteral(`${virtualCssFileName}:${fileId}`)
+                    )
+                  );
+                }
+              },
+            },
+          },
+        });
       }
     },
     resolveId(source, importer, options) {
@@ -145,66 +203,30 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
                 `;
       }
     },
-    api: {
-      reactBabel(babelConfig: ReactBabelOptions) {
-        babelConfig.plugins.push({
-          visitor: {
-            Program(root) {
-              if (
-                /node_modules/.test(this.filename) ||
-                /extractAssets/.test(this.filename)
-              ) {
-                return;
-              }
-              if (/\.[jt]sx$/.test(this.filename)) {
-                root.unshiftContainer('body', importDeclaration);
-              }
-            },
-          },
-        });
+    async transform(code, id) {
+      if (!/\.[jt]sx$/.test(id)) {
+        return;
+      }
 
-        babelConfig.plugins.push([
-          moduleResolverPlugin,
-          { root, alias: moduleResolverPluginAlias },
-        ]);
-        babelConfig.plugins.push([
-          compiledPlugin,
-          { importReact: false, ...baseOptions },
-        ]);
-        if (
-          options.extract &&
-          (options.extract === true ||
-            (command === 'serve' && options.extract.serve) ||
-            (command === 'build' && options.extract.build))
-        ) {
-          babelConfig.plugins.push([
-            compiledStripRuntimePlugin,
-            { compiledRequireExclude: true },
-          ]);
+      const res = await babel.transformAsync(code, {
+        filename: id,
+        sourceMaps: true,
+        plugins,
+        // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
+        // understand them, otherwise annotations and `interface` are syntax errors here.
+        parserOpts: { plugins: ['jsx', 'typescript'] },
+        configFile: false,
+        babelrc: false,
+      });
 
-          babelConfig.plugins.push({
-            visitor: {
-              Program: {
-                exit(path, { file }) {
-                  const styleRules = file.metadata.styleRules;
-                  if (styleRules.length) {
-                    const code = styleRules.join('\n');
-                    const fileId = hash(code) + '.css';
-                    virtualCssFiles.set(fileId, styleRules.join('\n'));
-                    path.unshiftContainer(
-                      'body',
-                      t.importDeclaration(
-                        [],
-                        t.stringLiteral(`${virtualCssFileName}:${fileId}`)
-                      )
-                    );
-                  }
-                },
-              },
-            },
-          });
-        }
-      },
+      if (!res || !res.code) {
+        return;
+      }
+
+      return {
+        code: res.code,
+        map: res.map,
+      };
     },
   };
 };
