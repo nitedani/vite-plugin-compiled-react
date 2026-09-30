@@ -85,3 +85,20 @@ describe('Vike ?extractAssets modules', () => {
     assert.match(result.code, /className=\{ax\(/);
   });
 });
+
+describe('resolve.alias', () => {
+  it('resolves aliases against the Vite root', async () => {
+    const plugin = compiled();
+    plugin.configResolved({
+      root: '/project',
+      resolve: { alias: [{ find: '@', replacement: '/project/src' }] },
+    });
+    const result = await plugin.transform.call(
+      {},
+      "import { x } from '@/styles';\nexport const Page = () => <div>{x}</div>;",
+      '/project/src/pages/Page.jsx'
+    );
+
+    assert.match(result.code, /from "\.\.\/styles"/);
+  });
+});

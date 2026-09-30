@@ -76,7 +76,11 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             },
           },
         },
-        [moduleResolverPlugin, { root, alias: moduleResolverPluginAlias }],
+        // Relative alias targets are relative to Vite's root, not to the working directory.
+        [
+          moduleResolverPlugin,
+          { root, cwd: root, alias: moduleResolverPluginAlias },
+        ],
         [compiledPlugin, { importReact: false, ...baseOptions }],
       ];
 
