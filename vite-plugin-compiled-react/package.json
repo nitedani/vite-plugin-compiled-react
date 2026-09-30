@@ -32,7 +32,7 @@
     },
     "peerDependencies": {
         "@compiled/react": ">=2.0.0",
-        "vite": "*"
+        "vite": ">=6.0.0"
     },
     "devDependencies": {
         "@compiled/react": "^2.0.0",
