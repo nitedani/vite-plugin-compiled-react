@@ -24,25 +24,25 @@
         "lib"
     ],
     "dependencies": {
-        "@babel/core": "^7.26.10",
-        "@babel/types": "^7.27.0",
-        "@compiled/babel-plugin": "^0.37.1",
-        "@compiled/babel-plugin-strip-runtime": "^0.37.1",
-        "babel-plugin-module-resolver": "^5.0.2"
+        "@babel/core": "^7.29.7",
+        "@babel/types": "^7.29.8",
+        "@compiled/babel-plugin": "^3.0.2",
+        "@compiled/babel-plugin-strip-runtime": "^3.0.3",
+        "babel-plugin-module-resolver": "^5.0.3"
     },
     "peerDependencies": {
-        "vite": "*",
-        "@compiled/react": "*",
-        "@vitejs/plugin-react": "*"
+        "@compiled/react": ">=2.0.0",
+        "@vitejs/plugin-react": "*",
+        "vite": "*"
     },
     "devDependencies": {
-        "@compiled/react": "^0.18.3",
+        "@compiled/react": "^2.0.0",
         "@types/babel__core": "7.20.5",
         "@types/node": "^22.14.0",
-        "rimraf": "^6.0.1",
-        "typescript": "^5.8.3",
         "@types/react": "^19.1.0",
-        "@vitejs/plugin-react": "^4.3.4"
+        "@vitejs/plugin-react": "^4.3.4",
+        "rimraf": "^6.0.1",
+        "typescript": "^5.8.3"
     },
     "prettier": {
         "singleQuote": true,
