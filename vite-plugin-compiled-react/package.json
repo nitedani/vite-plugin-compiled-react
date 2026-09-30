@@ -28,6 +28,7 @@
         "@babel/types": "^7.29.8",
         "@compiled/babel-plugin": "^3.0.2",
         "@compiled/babel-plugin-strip-runtime": "^3.0.3",
+        "@types/babel__core": "7.20.5",
         "babel-plugin-module-resolver": "^5.0.3"
     },
     "peerDependencies": {
@@ -36,7 +37,6 @@
     },
     "devDependencies": {
         "@compiled/react": "^2.0.0",
-        "@types/babel__core": "7.20.5",
         "@types/node": "^26.6.3",
         "@types/react": "^19.3.0",
         "rimraf": "^6.1.3",
