@@ -46,6 +46,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   };
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
+  const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
   const { extract, ...baseOptions } = options;
   let command = '';
   let plugins: babel.PluginItem[] = [];
@@ -131,7 +132,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     resolveId(source) {
-      if (source.startsWith(virtualCssFileName)) {
+      if (source.startsWith(`${virtualCssFileName}:`)) {
         return '\0' + source;
       }
     },
@@ -146,8 +147,9 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
 
       const virtualCssImporterMods = new Set<EnvironmentModuleNode>();
       for (const cssId of virtualCssFiles.keys()) {
-        const ids = `\0${virtualCssFileName}:${cssId}`;
-        const mod = this.environment.moduleGraph.getModuleById(ids);
+        const mod = this.environment.moduleGraph.getModuleById(
+          resolvedVirtualCssPrefix + cssId
+        );
         if (!mod) {
           continue;
         }
@@ -172,11 +174,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     load(id) {
-      if (id.includes(virtualCssFileName)) {
-        const fileId = id.split(':').pop()?.split('?')[0];
-        if (!fileId) {
-          return;
-        }
+      if (id.startsWith(resolvedVirtualCssPrefix)) {
+        const [fileId] = id.slice(resolvedVirtualCssPrefix.length).split('?');
         return virtualCssFiles.get(fileId);
       }
 
