@@ -51,10 +51,9 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         if (typeof find !== 'string' || !find || !replacement) {
           continue;
         }
-        moduleResolverPluginAlias[find] =
-          replacement.split('/').length > 2
-            ? replacement.replace(root, '.')
-            : replacement;
+        moduleResolverPluginAlias[find] = replacement.startsWith(root + '/')
+          ? '.' + replacement.slice(root.length)
+          : replacement;
       }
 
       plugins = [
@@ -69,7 +68,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
               // node per file: an AST node must not be shared between files.
               path.unshiftContainer(
                 'body',
-                t.importDeclaration([], t.stringLiteral('@compiled/react'))
+                t.importDeclaration([], t.stringLiteral('@compiled/react')),
               );
             },
           },
@@ -101,8 +100,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
                     'body',
                     t.importDeclaration(
                       [],
-                      t.stringLiteral(`${virtualCssFileName}:${fileId}`)
-                    )
+                      t.stringLiteral(`${virtualCssFileName}:${fileId}`),
+                    ),
                   );
                 }
               },
@@ -128,7 +127,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       const virtualCssImporterMods = new Set<EnvironmentModuleNode>();
       for (const cssId of virtualCssFiles.keys()) {
         const mod = this.environment.moduleGraph.getModuleById(
-          resolvedVirtualCssPrefix + cssId
+          resolvedVirtualCssPrefix + cssId,
         );
         if (!mod) {
           continue;
@@ -200,8 +199,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           plugins: filepath.endsWith('.ts')
             ? ['typescript']
             : filepath.endsWith('.tsx')
-            ? ['jsx', 'typescript']
-            : ['jsx'],
+              ? ['jsx', 'typescript']
+              : ['jsx'],
         },
         configFile: false,
         babelrc: false,
