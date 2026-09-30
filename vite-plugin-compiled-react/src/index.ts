@@ -1,62 +1,41 @@
 import t from '@babel/types';
-import compiledPlugin from '@compiled/babel-plugin';
+import babel from '@babel/core';
+import compiledPlugin, { type PluginOptions } from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
-import type { ReactBabelOptions } from '@vitejs/plugin-react';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
-import { EnvironmentModuleNode, type Plugin } from 'vite';
+import { createFilter, type EnvironmentModuleNode, type Plugin } from 'vite';
 
-export type CompiledPluginOptions = {
+export type CompiledPluginOptions = Pick<
+  PluginOptions,
+  'cache' | 'optimizeCss' | 'onIncludedFiles' | 'addComponentName'
+> & {
   /**
-  Will cache the result of statically evaluated imports.
-  true will cache for the duration of the node process
-  'single-pass' will cache for a single pass of a file
-  false turns caching off
-  Defaults to true.
+  Extract the styles into CSS files, for `build` and `serve` separately or for both with `true`.
+  Defaults to false.
    */
-  cache?: boolean | 'single-pass';
-
-  /**  
-  Will run additional cssnano plugins to normalize CSS during build.
-  Defaults to true.
-   */
-  optimizeCss?: boolean;
-
-  /**
-  Will callback at the end of a file pass with all imported files that were statically evaluated into the file.
-  */
-  onIncludedFiles?: (files: string[]) => void;
-
-  /**
-  Add the component name as class name to DOM in non-production environment if styled is used.
-  Default to false
-   */
-  addComponentName?: boolean;
-
   extract?: { build: boolean; serve: boolean } | boolean;
 };
 
-const virtualCssFiles = new Map();
+const virtualCssFiles = new Map<string, string>();
+const defaultIncludeRE = /\.[tj]sx?$/;
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
+  const filter = createFilter(defaultIncludeRE);
+  // Extracted stylesheets are keyed by this hash: two with the same hash would share one module.
   const hash = (code: string) => {
-    return createHash('md5').update(code).digest('hex').substring(2, 9);
+    return createHash('md5').update(code).digest('hex').slice(0, 16);
   };
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
-  const importDeclaration = t.importDeclaration(
-    [],
-    t.stringLiteral('@compiled/react')
-  );
+  const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
   const { extract, ...baseOptions } = options;
-  let command = '';
-  let root: string;
-  const moduleResolverPluginAlias = {};
+  let plugins: babel.PluginItem[] = [];
+
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
-    config(config, env) {
-      command = env.command;
+    config() {
       return {
         ssr: {
           // https://github.com/vikejs/vike/issues/621
@@ -65,26 +44,74 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       };
     },
     configResolved(config) {
-      root = config.root;
-      if (!Array.isArray(config.resolve.alias)) {
-        return;
-      }
-      for (const e of config.resolve.alias) {
-        const find = e.find;
-        let replacement = e.replacement;
-        if (find && replacement) {
-          if (typeof replacement !== 'string' || typeof find !== 'string') {
-            continue;
-          }
-          if (replacement.split('/').length > 2) {
-            replacement = replacement.replace(root, '.');
-          }
-          moduleResolverPluginAlias[find] = replacement;
+      const { root } = config;
+      const moduleResolverPluginAlias: Record<string, string> = {};
+      for (const { find, replacement } of config.resolve.alias) {
+        // babel-plugin-module-resolver's alias keys are strings, RegExp aliases are left out.
+        if (typeof find !== 'string' || !find || !replacement) {
+          continue;
         }
+        moduleResolverPluginAlias[find] = replacement.startsWith(root + '/')
+          ? '.' + replacement.slice(root.length)
+          : replacement;
+      }
+
+      plugins = [
+        {
+          visitor: {
+            Program(path) {
+              // Vike's ?extractAssets modules are reduced to their CSS imports.
+              if (/[?&]extractAssets(&|$)/.test(this.filename)) {
+                return;
+              }
+              // Compiled only compiles the css prop in files importing @compiled/react. A new
+              // node per file: an AST node must not be shared between files.
+              path.unshiftContainer(
+                'body',
+                t.importDeclaration([], t.stringLiteral('@compiled/react')),
+              );
+            },
+          },
+        },
+        // Relative alias targets are relative to Vite's root, not to the working directory.
+        [
+          moduleResolverPlugin,
+          { root, cwd: root, alias: moduleResolverPluginAlias },
+        ],
+        [compiledPlugin, { importReact: false, ...baseOptions }],
+      ];
+
+      if (typeof extract === 'object' ? extract[config.command] : extract) {
+        plugins.push([
+          compiledStripRuntimePlugin,
+          { compiledRequireExclude: true },
+        ]);
+
+        plugins.push({
+          visitor: {
+            Program: {
+              exit(path, { file }) {
+                const styleRules = file.metadata.styleRules;
+                if (styleRules.length) {
+                  const code = styleRules.join('\n');
+                  const fileId = hash(code) + '.css';
+                  virtualCssFiles.set(fileId, code);
+                  path.unshiftContainer(
+                    'body',
+                    t.importDeclaration(
+                      [],
+                      t.stringLiteral(`${virtualCssFileName}:${fileId}`),
+                    ),
+                  );
+                }
+              },
+            },
+          },
+        });
       }
     },
-    resolveId(source, importer, options) {
-      if (source.startsWith(virtualCssFileName)) {
+    resolveId(source) {
+      if (source.startsWith(`${virtualCssFileName}:`)) {
         return '\0' + source;
       }
     },
@@ -99,8 +126,9 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
 
       const virtualCssImporterMods = new Set<EnvironmentModuleNode>();
       for (const cssId of virtualCssFiles.keys()) {
-        const ids = `\0${virtualCssFileName}:${cssId}`;
-        const mod = this.environment.moduleGraph.getModuleById(ids);
+        const mod = this.environment.moduleGraph.getModuleById(
+          resolvedVirtualCssPrefix + cssId,
+        );
         if (!mod) {
           continue;
         }
@@ -125,11 +153,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       }
     },
     load(id) {
-      if (id.includes(virtualCssFileName)) {
-        const fileId = id.split(':').pop()?.split('?')[0];
-        if (!fileId) {
-          return;
-        }
+      if (id.startsWith(resolvedVirtualCssPrefix)) {
+        const [fileId] = id.slice(resolvedVirtualCssPrefix.length).split('?');
         return virtualCssFiles.get(fileId);
       }
 
@@ -145,66 +170,50 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
                 `;
       }
     },
-    api: {
-      reactBabel(babelConfig: ReactBabelOptions) {
-        babelConfig.plugins.push({
-          visitor: {
-            Program(root) {
-              if (
-                /node_modules/.test(this.filename) ||
-                /extractAssets/.test(this.filename)
-              ) {
-                return;
-              }
-              if (/\.[jt]sx$/.test(this.filename)) {
-                root.unshiftContainer('body', importDeclaration);
-              }
-            },
-          },
-        });
+    async transform(code, id) {
+      // Keep the same default boundary as @vitejs/plugin-react: dependencies are excluded, the
+      // query is stripped before filtering, and plain .js/.ts files are eligible as well.
+      if (id.includes('/node_modules/')) {
+        return;
+      }
+      const [filepath] = id.split('?');
+      if (!filepath || !filter(filepath)) {
+        return;
+      }
+      if (
+        !filepath.endsWith('x') &&
+        !code.includes("'@compiled/react'") &&
+        !code.includes('"@compiled/react"')
+      ) {
+        return;
+      }
+      const res = await babel.transformAsync(code, {
+        filename: id,
+        sourceFileName: filepath,
+        sourceMaps: true,
+        plugins,
+        // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
+        // understand them, otherwise annotations and `interface` are syntax errors here. JSX
+        // stays off in .ts files, where it would reject `<string>value` type assertions.
+        parserOpts: {
+          plugins: filepath.endsWith('.ts')
+            ? ['typescript']
+            : filepath.endsWith('.tsx')
+              ? ['jsx', 'typescript']
+              : ['jsx'],
+        },
+        configFile: false,
+        babelrc: false,
+      });
 
-        babelConfig.plugins.push([
-          moduleResolverPlugin,
-          { root, alias: moduleResolverPluginAlias },
-        ]);
-        babelConfig.plugins.push([
-          compiledPlugin,
-          { importReact: false, ...baseOptions },
-        ]);
-        if (
-          options.extract &&
-          (options.extract === true ||
-            (command === 'serve' && options.extract.serve) ||
-            (command === 'build' && options.extract.build))
-        ) {
-          babelConfig.plugins.push([
-            compiledStripRuntimePlugin,
-            { compiledRequireExclude: true },
-          ]);
+      if (!res || !res.code) {
+        return;
+      }
 
-          babelConfig.plugins.push({
-            visitor: {
-              Program: {
-                exit(path, { file }) {
-                  const styleRules = file.metadata.styleRules;
-                  if (styleRules.length) {
-                    const code = styleRules.join('\n');
-                    const fileId = hash(code) + '.css';
-                    virtualCssFiles.set(fileId, styleRules.join('\n'));
-                    path.unshiftContainer(
-                      'body',
-                      t.importDeclaration(
-                        [],
-                        t.stringLiteral(`${virtualCssFileName}:${fileId}`)
-                      )
-                    );
-                  }
-                },
-              },
-            },
-          });
-        }
-      },
+      return {
+        code: res.code,
+        map: res.map,
+      };
     },
   };
 };
