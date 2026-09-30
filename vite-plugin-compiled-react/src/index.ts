@@ -221,8 +221,15 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         sourceMaps: true,
         plugins,
         // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
-        // understand them, otherwise annotations and `interface` are syntax errors here.
-        parserOpts: { plugins: ['jsx', 'typescript'] },
+        // understand them, otherwise annotations and `interface` are syntax errors here. JSX
+        // stays off in .ts files, where it would reject `<string>value` type assertions.
+        parserOpts: {
+          plugins: filepath.endsWith('.ts')
+            ? ['typescript']
+            : filepath.endsWith('.tsx')
+              ? ['jsx', 'typescript']
+              : ['jsx'],
+        },
         configFile: false,
         babelrc: false,
       });
