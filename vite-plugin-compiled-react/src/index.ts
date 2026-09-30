@@ -1,38 +1,19 @@
 import t from '@babel/types';
 import babel from '@babel/core';
-import compiledPlugin from '@compiled/babel-plugin';
+import compiledPlugin, { type PluginOptions } from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
 import { createFilter, type EnvironmentModuleNode, type Plugin } from 'vite';
 
-export type CompiledPluginOptions = {
+export type CompiledPluginOptions = Pick<
+  PluginOptions,
+  'cache' | 'optimizeCss' | 'onIncludedFiles' | 'addComponentName'
+> & {
   /**
-  Will cache the result of statically evaluated imports.
-  true will cache for the duration of the node process
-  'single-pass' will cache for a single pass of a file
-  false turns caching off
-  Defaults to true.
+  Extract the styles into CSS files, for `build` and `serve` separately or for both with `true`.
+  Defaults to false.
    */
-  cache?: boolean | 'single-pass';
-
-  /**  
-  Will run additional cssnano plugins to normalize CSS during build.
-  Defaults to true.
-   */
-  optimizeCss?: boolean;
-
-  /**
-  Will callback at the end of a file pass with all imported files that were statically evaluated into the file.
-  */
-  onIncludedFiles?: (files: string[]) => void;
-
-  /**
-  Add the component name as class name to DOM in non-production environment if styled is used.
-  Default to false
-   */
-  addComponentName?: boolean;
-
   extract?: { build: boolean; serve: boolean } | boolean;
 };
 
