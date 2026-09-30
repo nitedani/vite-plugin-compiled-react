@@ -46,10 +46,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   };
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
-  const importDeclaration = t.importDeclaration(
-    [],
-    t.stringLiteral('@compiled/react')
-  );
   const { extract, ...baseOptions } = options;
   let command = '';
   let root: string;
@@ -90,11 +86,16 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       plugins = [
         {
           visitor: {
-            Program(root) {
+            Program(path) {
               if (/extractAssets/.test(this.filename)) {
                 return;
               }
-              root.unshiftContainer('body', importDeclaration);
+              // Compiled only compiles the css prop in files importing @compiled/react. A new
+              // node per file: an AST node must not be shared between files.
+              path.unshiftContainer(
+                'body',
+                t.importDeclaration([], t.stringLiteral('@compiled/react'))
+              );
             },
           },
         },
