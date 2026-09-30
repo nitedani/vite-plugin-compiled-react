@@ -1,20 +1,19 @@
 {
     "compilerOptions": {
         "rootDir": "./src",
-        "baseUrl": "./src",
         "types": [
             "vite/client"
         ],
         "strictNullChecks": true,
         "outDir": "lib",
-        "module": "esnext",
+        "module": "nodenext",
         "target": "ESNext",
         "lib": [
             "DOM",
             "ESNext",
         ],
         "declaration": true,
-        "moduleResolution": "node",
+        "moduleResolution": "nodenext",
         "allowSyntheticDefaultImports": true,
         "esModuleInterop": true,
         "noImplicitThis": true,
