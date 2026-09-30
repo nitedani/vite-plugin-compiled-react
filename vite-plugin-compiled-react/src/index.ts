@@ -17,7 +17,7 @@ export type CompiledPluginOptions = Pick<
   extract?: { build: boolean; serve: boolean } | boolean;
 };
 
-const virtualCssFiles = new Map();
+const virtualCssFiles = new Map<string, string>();
 const defaultIncludeRE = /\.[tj]sx?$/;
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
@@ -30,14 +30,12 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
   const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
   const { extract, ...baseOptions } = options;
-  let command = '';
   let plugins: babel.PluginItem[] = [];
 
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
-    config(_config, env) {
-      command = env.command;
+    config() {
       return {
         ssr: {
           // https://github.com/vikejs/vike/issues/621
@@ -84,12 +82,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         [compiledPlugin, { importReact: false, ...baseOptions }],
       ];
 
-      if (
-        options.extract &&
-        (options.extract === true ||
-          (command === 'serve' && options.extract.serve) ||
-          (command === 'build' && options.extract.build))
-      ) {
+      if (typeof extract === 'object' ? extract[config.command] : extract) {
         plugins.push([
           compiledStripRuntimePlugin,
           { compiledRequireExclude: true },
@@ -103,7 +96,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
                 if (styleRules.length) {
                   const code = styleRules.join('\n');
                   const fileId = hash(code) + '.css';
-                  virtualCssFiles.set(fileId, styleRules.join('\n'));
+                  virtualCssFiles.set(fileId, code);
                   path.unshiftContainer(
                     'body',
                     t.importDeclaration(
