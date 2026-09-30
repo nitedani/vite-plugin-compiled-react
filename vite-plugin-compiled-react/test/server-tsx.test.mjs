@@ -21,7 +21,7 @@ export default function Card({ children }: Props): ReactNode {
   const result = await plugin.transform.call(
     { environment },
     code,
-    '/project/pages/index/Card.tsx'
+    '/project/pages/index/Card.tsx',
   );
 
   assert.ok(result, 'the file was not transformed');
@@ -30,11 +30,11 @@ export default function Card({ children }: Props): ReactNode {
   // Types are only parsed, not stripped: lowering them is left to Vite.
   assert.match(result.code, /interface Props/);
   const cssImport = result.code.match(
-    /"(virtual:vite-plugin-compiled-react:[^"]+)"/
+    /"(virtual:vite-plugin-compiled-react:[^"]+)"/,
   );
   assert.ok(cssImport, 'no extracted stylesheet import');
   assert.match(
     plugin.load.call({ environment }, '\0' + cssImport[1]),
-    /color:red/
+    /color:red/,
   );
 });

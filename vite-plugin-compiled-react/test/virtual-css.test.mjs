@@ -13,10 +13,10 @@ it('loads extracted CSS only for the resolved virtual module id', async () => {
   const result = await plugin.transform.call(
     { environment },
     "export const Page = () => <div css={{ color: 'red' }} />;",
-    '/project/src/Page.jsx'
+    '/project/src/Page.jsx',
   );
   const [, source] = result.code.match(
-    /"(virtual:vite-plugin-compiled-react:[^"]+)"/
+    /"(virtual:vite-plugin-compiled-react:[^"]+)"/,
   );
   const resolved = plugin.resolveId.call({ environment }, source);
   assert.equal(resolved, '\0' + source);
@@ -42,7 +42,7 @@ it('extracts per command when extract is an object', async () => {
     const result = await plugin.transform.call(
       {},
       code,
-      '/project/src/Page.jsx'
+      '/project/src/Page.jsx',
     );
 
     const extracted = /virtual:vite-plugin-compiled-react:/.test(result.code);

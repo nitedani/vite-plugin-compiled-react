@@ -15,7 +15,7 @@ describe('parser', () => {
 const value: unknown = 'red';
 export const color = <string>value;
 export const styles = css({ color: 'red' });`,
-      '/project/src/style.ts'
+      '/project/src/style.ts',
     );
 
     assertCompiled(result);
@@ -26,7 +26,7 @@ export const styles = css({ color: 'red' });`,
     const result = await transform(
       `import type { ReactNode } from 'react';
 export const Page = ({ children }: { children: ReactNode }) => <div css={{ color: 'red' }}>{children}</div>;`,
-      '/project/src/Page.tsx'
+      '/project/src/Page.tsx',
     );
 
     assertCompiled(result);
@@ -36,7 +36,7 @@ export const Page = ({ children }: { children: ReactNode }) => <div css={{ color
   it('parses JSX in .jsx files', async () => {
     const result = await transform(
       "export const Page = () => <div css={{ color: 'red' }} />;",
-      '/project/src/Page.jsx'
+      '/project/src/Page.jsx',
     );
 
     assertCompiled(result);

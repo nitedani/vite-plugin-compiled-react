@@ -11,7 +11,7 @@ describe('transform filter', () => {
   it('transforms plain JavaScript files', async () => {
     const result = await transform(
       "import { css } from '@compiled/react'; export const value = css({ color: 'red' });",
-      '/project/src/style.js'
+      '/project/src/style.js',
     );
 
     assertCompiled(result);
@@ -20,7 +20,7 @@ describe('transform filter', () => {
   it('transforms plain TypeScript files', async () => {
     const result = await transform(
       "import { css } from '@compiled/react'; export const value: string = css({ color: 'red' });",
-      '/project/src/style.ts'
+      '/project/src/style.ts',
     );
 
     assertCompiled(result);
@@ -29,7 +29,7 @@ describe('transform filter', () => {
   it('strips the query before filtering', async () => {
     const result = await transform(
       "export const Page = () => <div css={{ color: 'red' }} />;",
-      '/project/src/style.tsx?direct'
+      '/project/src/style.tsx?direct',
     );
 
     assertCompiled(result);
@@ -39,7 +39,7 @@ describe('transform filter', () => {
   it('does not transform dependencies', async () => {
     const result = await transform(
       "// @flow\nopaque type Token = string; export const token: Token = 'dependency';",
-      '/project/node_modules/flow-dependency/index.jsx'
+      '/project/node_modules/flow-dependency/index.jsx',
     );
 
     assert.equal(result, undefined);
@@ -48,7 +48,7 @@ describe('transform filter', () => {
   it('does not transform plain JavaScript without a Compiled import', async () => {
     const result = await transform(
       "import { jsx } from 'react/jsx-runtime'; export const Page = () => jsx('div', {});",
-      '/project/generated/runtime.js'
+      '/project/generated/runtime.js',
     );
 
     assert.equal(result, undefined);
@@ -72,7 +72,7 @@ describe('Vike ?extractAssets modules', () => {
   it('does not add the Compiled import to them', async () => {
     const result = await transform(
       code,
-      '/project/src/Page.jsx?extractAssets&lang.jsx'
+      '/project/src/Page.jsx?extractAssets&lang.jsx',
     );
 
     assert.match(result.code, /\bcss=\{/);
@@ -96,7 +96,7 @@ describe('resolve.alias', () => {
     const result = await plugin.transform.call(
       {},
       "import { x } from '@/styles';\nexport const Page = () => <div>{x}</div>;",
-      '/project/src/pages/Page.jsx'
+      '/project/src/pages/Page.jsx',
     );
 
     assert.match(result.code, /from "\.\.\/styles"/);
