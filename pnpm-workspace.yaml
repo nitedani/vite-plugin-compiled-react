@@ -1,3 +1,6 @@
 packages:
   - 'vite-plugin-compiled-react'
   - 'example'
+
+allowBuilds:
+  esbuild: true
