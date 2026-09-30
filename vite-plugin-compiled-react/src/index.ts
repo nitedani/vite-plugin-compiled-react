@@ -22,8 +22,9 @@ const defaultIncludeRE = /\.[tj]sx?$/;
 
 export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const filter = createFilter(defaultIncludeRE);
+  // Extracted stylesheets are keyed by this hash: two with the same hash would share one module.
   const hash = (code: string) => {
-    return createHash('md5').update(code).digest('hex').substring(2, 9);
+    return createHash('md5').update(code).digest('hex').slice(0, 16);
   };
 
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
