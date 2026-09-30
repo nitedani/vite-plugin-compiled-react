@@ -4,7 +4,7 @@ import compiledPlugin from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
-import { createFilter, EnvironmentModuleNode, type Plugin } from 'vite';
+import { createFilter, type EnvironmentModuleNode, type Plugin } from 'vite';
 
 export type CompiledPluginOptions = {
   /**
@@ -48,14 +48,12 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
   const { extract, ...baseOptions } = options;
   let command = '';
-  let root: string;
-  const moduleResolverPluginAlias = {};
   let plugins: babel.PluginItem[] = [];
 
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
-    config(config, env) {
+    config(_config, env) {
       command = env.command;
       return {
         ssr: {
@@ -65,22 +63,17 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       };
     },
     configResolved(config) {
-      root = config.root;
-      if (!Array.isArray(config.resolve.alias)) {
-        return;
-      }
-      for (const e of config.resolve.alias) {
-        const find = e.find;
-        let replacement = e.replacement;
-        if (find && replacement) {
-          if (typeof replacement !== 'string' || typeof find !== 'string') {
-            continue;
-          }
-          if (replacement.split('/').length > 2) {
-            replacement = replacement.replace(root, '.');
-          }
-          moduleResolverPluginAlias[find] = replacement;
+      const { root } = config;
+      const moduleResolverPluginAlias: Record<string, string> = {};
+      for (const { find, replacement } of config.resolve.alias) {
+        // babel-plugin-module-resolver's alias keys are strings, RegExp aliases are left out.
+        if (typeof find !== 'string' || !find || !replacement) {
+          continue;
         }
+        moduleResolverPluginAlias[find] =
+          replacement.split('/').length > 2
+            ? replacement.replace(root, '.')
+            : replacement;
       }
 
       plugins = [
@@ -137,7 +130,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         });
       }
     },
-    resolveId(source, importer, options) {
+    resolveId(source) {
       if (source.startsWith(virtualCssFileName)) {
         return '\0' + source;
       }
