@@ -29,7 +29,12 @@ export default function Card({ children }: Props): ReactNode {
   assert.doesNotMatch(result.code, /\bcss=\{/);
   // Types are only parsed, not stripped: lowering them is left to Vite.
   assert.match(result.code, /interface Props/);
-  const cssImport = result.code.match(/"(virtual:vite-plugin-compiled-react:[^"]+)"/);
+  const cssImport = result.code.match(
+    /"(virtual:vite-plugin-compiled-react:[^"]+)"/
+  );
   assert.ok(cssImport, 'no extracted stylesheet import');
-  assert.match(plugin.load.call({ environment }, '\0' + cssImport[1]), /color:red/);
+  assert.match(
+    plugin.load.call({ environment }, '\0' + cssImport[1]),
+    /color:red/
+  );
 });

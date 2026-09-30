@@ -207,8 +207,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           plugins: filepath.endsWith('.ts')
             ? ['typescript']
             : filepath.endsWith('.tsx')
-              ? ['jsx', 'typescript']
-              : ['jsx'],
+            ? ['jsx', 'typescript']
+            : ['jsx'],
         },
         configFile: false,
         babelrc: false,
