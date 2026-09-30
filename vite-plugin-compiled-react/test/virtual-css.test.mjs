@@ -28,3 +28,24 @@ it('loads extracted CSS only for the resolved virtual module id', async () => {
   assert.equal(load(source), undefined);
   assert.equal(load('/project/src/' + source), undefined);
 });
+
+it('extracts per command when extract is an object', async () => {
+  const { compiled } = await import('../lib/index.js');
+  const code = "export const Page = () => <div css={{ color: 'red' }} />;";
+  for (const command of ['build', 'serve']) {
+    const plugin = compiled({ extract: { build: true, serve: false } });
+    plugin.configResolved({
+      root: '/project',
+      command,
+      resolve: { alias: [] },
+    });
+    const result = await plugin.transform.call(
+      {},
+      code,
+      '/project/src/Page.jsx'
+    );
+
+    const extracted = /virtual:vite-plugin-compiled-react:/.test(result.code);
+    assert.equal(extracted, command === 'build', command);
+  }
+});
