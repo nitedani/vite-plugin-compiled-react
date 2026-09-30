@@ -63,7 +63,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         {
           visitor: {
             Program(path) {
-              if (/extractAssets/.test(this.filename)) {
+              // Vike's ?extractAssets modules are reduced to their CSS imports.
+              if (/[?&]extractAssets(&|$)/.test(this.filename)) {
                 return;
               }
               // Compiled only compiles the css prop in files importing @compiled/react. A new
