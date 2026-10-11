@@ -1,4 +1,6 @@
 import babel, { type PluginItem, type PluginObj } from '@babel/core';
+// @ts-expect-error The package has no types.
+import transformJsxBabelPlugin from '@babel/plugin-transform-react-jsx';
 import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
 import stripRuntimeBabelPlugin, {
   type BabelFileMetadata,
@@ -141,6 +143,8 @@ export const useCache = () => {
               { compiledRequireExclude: true },
             ],
             extractStyles && importStylesheet,
+            // `styled` compiles to JSX, which Vite doesn't expect in .ts and .js files.
+            !isJsxFile && [transformJsxBabelPlugin, { runtime: 'automatic' }],
           ].filter(Boolean) as PluginItem[],
         });
         if (result?.code) {

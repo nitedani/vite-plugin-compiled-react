@@ -78,6 +78,18 @@ describe('which modules are compiled', () => {
     assert.match(await transform('src/styles.ts'), /export const styles = null;/);
   });
 
+  it('compiles styled components in .ts modules', async () => {
+    const { transform, stylesheet } = await serve({
+      'src/Box.ts': `
+        import { styled } from '@compiled/react';
+        export const Box = styled.div({ color: 'red' });
+      `,
+    });
+    const code = await transform('src/Box.ts');
+    assert.match(code, /className: ax\(\["_syaz5scu", __cmplp\.className\]\)/);
+    assert.equal(await stylesheet(code), '._syaz5scu{color:red}');
+  });
+
   it("leaves alone modules that can't use Compiled, and dependencies", async () => {
     const { transform } = await serve({
       'src/plain.ts': `import './plain.css'; export const n: number = 1;`,
