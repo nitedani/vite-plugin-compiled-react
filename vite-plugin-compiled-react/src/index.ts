@@ -170,6 +170,8 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         filename: id,
         sourceFileName: filepath,
         sourceMaps: true,
+        // React's dev runtime reports the line numbers its JSX transform sees.
+        retainLines: true,
         plugins: [
           ...plugins,
           [
