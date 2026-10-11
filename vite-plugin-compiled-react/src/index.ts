@@ -55,10 +55,6 @@ declare module 'react' {
 const stylesheetName = 'vite-plugin-compiled-react.css';
 const stylesheetId = `virtual:${stylesheetName}`;
 const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
-// Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so all
-// of an app's extracted rules go into one stylesheet. Its environments build with separate plugin
-// instances, so the rules are kept by app root.
-const rulesByRoot = new Map<string, Set<string>>();
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -66,8 +62,10 @@ const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
   let resolver: Resolver;
-  let rules: Set<string>;
   let server: ViteDevServer | undefined;
+  // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
+  // all extracted rules go into one stylesheet.
+  const rules = new Set<string>();
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
@@ -78,14 +76,14 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
+    // A build's client stylesheet then has the rules of the environments built before it.
+    sharedDuringBuild: true,
     configResolved(config) {
       extract =
         typeof options.extract === 'object'
           ? options.extract[config.command]
           : (options.extract ?? true);
       resolver = createResolver(config);
-      rules = rulesByRoot.get(config.root) ?? new Set();
-      rulesByRoot.set(config.root, rules);
     },
     configureServer(devServer) {
       server = devServer;
