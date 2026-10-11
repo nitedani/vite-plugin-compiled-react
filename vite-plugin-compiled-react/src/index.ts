@@ -7,15 +7,21 @@ import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { normalizePath, type Plugin, type ResolvedConfig } from 'vite';
+import {
+  normalizePath,
+  type Environment,
+  type Plugin,
+  type ResolvedConfig,
+} from 'vite';
 
 export type CompiledPluginOptions = {
   /**
    * Extract the styles into CSS files, which Vite bundles and links like any other CSS.
    * With `false`, Compiled's runtime inserts them while rendering.
    * `{ build, serve }` decides per Vite command.
+   * React Server Components always extract: the runtime can't run there.
    *
-   * @default false
+   * @default true
    */
   extract?: boolean | { build: boolean; serve: boolean };
   /**
@@ -63,7 +69,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
       extract =
         typeof options.extract === 'object'
           ? options.extract[config.command]
-          : !!options.extract;
+          : (options.extract ?? true);
       resolver = createResolver(config);
     },
     resolveId(id) {
@@ -76,14 +82,14 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
         const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
         return stylesheets.get(name!);
       }
+      // React Server environments have no createContext(), which this module calls when imported.
       if (
-        (this.environment.config.resolve.conditions.includes('react-server') ||
-          this.environment.name === 'rsc') &&
+        isReactServer(this.environment) &&
         /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
       ) {
         return `export default {};
 export const useCache = () => {
-  throw new Error("Please set extract: true in compiled plugin options for RSC support");
+  throw new Error("[vite-plugin-compiled-react] Compiled's runtime can't render styles in React Server Components.");
 };`;
       }
     },
@@ -99,6 +105,7 @@ export const useCache = () => {
         if (!isJsxFile && !code.includes('@compiled/react')) {
           return;
         }
+        const extractStyles = extract || isReactServer(this.environment);
         const result = await babel.transformAsync(code, {
           filename: file,
           sourceMaps: true,
@@ -131,11 +138,11 @@ export const useCache = () => {
                 },
               },
             ],
-            extract && [
+            extractStyles && [
               stripRuntimeBabelPlugin,
               { compiledRequireExclude: true },
             ],
-            extract && importStylesheet,
+            extractStyles && importStylesheet,
           ].filter(Boolean) as PluginItem[],
         });
         if (result?.code) {
@@ -152,6 +159,10 @@ export const useCache = () => {
       }
     },
   };
+}
+
+function isReactServer(environment: Environment) {
+  return environment.config.resolve.conditions.includes('react-server');
 }
 
 // Compiled only compiles the css prop in modules importing @compiled/react.

@@ -90,10 +90,11 @@ describe('which modules are compiled', () => {
 });
 
 describe('React Server environments', () => {
-  it('can import the Compiled runtime', async () => {
+  it('extract, and import the Compiled runtime', async () => {
     const { server } = await serve(
       { 'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;` },
       {
+        extract: false,
         environments: {
           rsc: {
             consumer: 'server',
@@ -140,7 +141,7 @@ async function serve(files, config = {}) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await writeFile(join(root, file), content);
   }
-  const { extract = true, ...viteConfig } =
+  const { extract, ...viteConfig } =
     typeof config === 'function' ? config(root) : config;
   const server = await createServer({
     root,
