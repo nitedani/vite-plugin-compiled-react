@@ -1,4 +1,4 @@
-import babel, { type PluginItem, type PluginObj } from '@babel/core';
+import babel, { type PluginItem, type PluginObj, type types } from '@babel/core';
 // @ts-expect-error The package has no types.
 import transformJsxBabelPlugin from '@babel/plugin-transform-react-jsx';
 import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
@@ -8,6 +8,7 @@ import stripRuntimeBabelPlugin, {
 import { sort } from '@compiled/css';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   normalizePath,
@@ -70,6 +71,8 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
+  const addDependent = (file: string, id: string) =>
+    dependents.set(file, (dependents.get(file) ?? new Set()).add(id));
   const stylesheet = () => sort([...rules].join(''));
 
   return {
@@ -119,22 +122,22 @@ export const useCache = () => {
           return;
         }
         const extractStyles = extract || isReactServer(this.environment);
-        const result = await babel.transformAsync(code, {
+        const ast = await parse(code, file);
+        if (server) {
+          // Compiled doesn't report the files it reads a member expression from, and TypeScript
+          // drops the imports whose values Compiled inlined, which Vite's module graph then misses.
+          for (const source of await valueSources(resolver, file, ast)) {
+            addDependent(source, id);
+          }
+        }
+        const result = await babel.transformFromAstAsync(ast, code, {
           filename: file,
+          cloneInputAst: false,
           sourceMaps: true,
           // React's dev runtime reports the line numbers its JSX transform sees.
           retainLines: true,
           configFile: false,
           babelrc: false,
-          // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files,
-          // where it would reject `<string>value` type assertions.
-          parserOpts: {
-            plugins: file.endsWith('.ts')
-              ? ['typescript']
-              : file.endsWith('.tsx')
-                ? ['jsx', 'typescript']
-                : ['jsx'],
-          },
           plugins: [
             isJsxFile && enableCssProp,
             [
@@ -145,9 +148,7 @@ export const useCache = () => {
                 optimizeCss: options.optimizeCss,
                 resolver,
                 onIncludedFiles(files: string[]) {
-                  for (const included of files.map(normalizePath)) {
-                    dependents.set(included, (dependents.get(included) ?? new Set()).add(id));
-                  }
+                  for (const included of files) addDependent(normalizePath(included), id);
                 },
               },
             ],
@@ -198,6 +199,72 @@ export const useCache = () => {
       }
     },
   };
+}
+
+// Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it
+// would reject `<string>value` type assertions.
+async function parse(code: string, file: string) {
+  const ast = await babel.parseAsync(code, {
+    filename: file,
+    configFile: false,
+    babelrc: false,
+    parserOpts: {
+      plugins: file.endsWith('.ts')
+        ? ['typescript']
+        : file.endsWith('.tsx')
+          ? ['jsx', 'typescript']
+          : ['jsx'],
+    },
+  });
+  return ast!;
+}
+
+// The local files a module's styles can read values from: the modules it imports, and the
+// modules those re-export.
+async function valueSources(resolver: Resolver, file: string, ast: types.File) {
+  const sources = new Set<string>();
+  const follow = async (importer: string, requests: string[]) => {
+    for (const request of requests) {
+      let source: string;
+      try {
+        source = normalizePath(resolver.resolveSync(importer, request));
+      } catch {
+        continue;
+      }
+      if (sources.has(source) || source.includes('/node_modules/')) continue;
+      sources.add(source);
+      await follow(source, await reexports(source));
+    }
+  };
+  await follow(
+    file,
+    ast.program.body.flatMap(node =>
+      node.type === 'ImportDeclaration' ? [node.source.value] : [],
+    ),
+  );
+  return sources;
+}
+
+// Parsed once per change of the file.
+const reexportsCache = new Map<string, { mtimeMs: number; requests: string[] }>();
+
+async function reexports(file: string) {
+  if (!/\.[cm]?[jt]sx?$/.test(file)) return [];
+  const { mtimeMs } = await stat(file);
+  const cached = reexportsCache.get(file);
+  if (cached?.mtimeMs === mtimeMs) return cached.requests;
+  const requests = await parse(await readFile(file, 'utf8'), file).then(
+    ast =>
+      ast.program.body.flatMap(node =>
+        (node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') &&
+        node.source
+          ? [node.source.value]
+          : [],
+      ),
+    () => [],
+  );
+  reexportsCache.set(file, { mtimeMs, requests });
+  return requests;
 }
 
 function isReactServer(environment: Environment) {

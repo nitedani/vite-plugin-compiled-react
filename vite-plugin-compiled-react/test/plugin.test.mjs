@@ -168,27 +168,53 @@ describe('React Server environments', () => {
 
 describe('dev', () => {
   it('re-compiles a module when a module it read values from changes', async () => {
-    const { root, server, transform, stylesheet } = await serve({
-      'src/palette.ts': `export const color = 'red';`,
-      'src/colors.ts': `export { color } from './palette';`,
+    const fixture = await serve({
+      'src/palette.ts': `export const red = 'red';`,
+      'src/colors.ts': `import { red } from './palette'; export const color = red;`,
       'src/Card.jsx': `
         import { color } from './colors';
         export const Card = () => <p css={{ color }} />;
       `,
     });
-    assert.match(await stylesheet(await transform('src/Card.jsx')), /color:red/);
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
+    await edit(fixture, 'src/palette.ts', `export const red = 'blue';`);
+    await eventually(
+      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
+      /color:blue/,
+    );
+  });
 
-    const palette = join(root, 'src/palette.ts');
-    await writeFile(palette, `export const color = 'blue';`);
-    server.watcher.emit('change', palette);
-    let css;
-    for (let i = 0; i < 50 && !/color:blue/.test(css); i++) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      css = await stylesheet(await transform('src/Card.jsx'));
-    }
-    assert.match(css, /color:blue/);
+  it('re-compiles a module whose styles read an object through a re-export', async () => {
+    const fixture = await serve({
+      'src/palette.ts': `export const styles = { card: { color: 'red' } };`,
+      'src/styles.ts': `export { styles } from './palette';`,
+      'src/Card.jsx': `
+        import { styles } from './styles';
+        export const Card = () => <p css={styles.card} />;
+      `,
+    });
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
+    await edit(fixture, 'src/palette.ts', `export const styles = { card: { color: 'blue' } };`);
+    await eventually(
+      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
+      /color:blue/,
+    );
   });
 });
+
+async function edit({ root, server }, file, content) {
+  await writeFile(join(root, file), content);
+  server.watcher.emit('change', join(root, file));
+}
+
+async function eventually(read, pattern) {
+  let value;
+  for (let i = 0; i < 50 && !pattern.test(value); i++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    value = await read();
+  }
+  assert.match(value, pattern);
+}
 
 async function fixture(files) {
   const root = await mkdtemp(join(packageDir, '.fixture-'));
