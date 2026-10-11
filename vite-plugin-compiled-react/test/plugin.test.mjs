@@ -31,19 +31,19 @@ export const Card = ({ children }: Props) => (
     assert.equal(await stylesheet(code), '._syaz5scu{color:red}');
   });
 
-  it('reads values from imported modules, through string aliases', async () => {
+  it('reads values from imported modules, through string aliases and from the root', async () => {
     const { transform, stylesheet } = await serve(
       {
         'src/colors/a.ts': `export const red = 'red';`,
         'src/colors/b.ts': `export const blue = 'blue';`,
         'src/Page.jsx': `
           import { red } from '@colors/a';
-          import { blue } from '@colors/b';
+          import { blue } from '#/colors/b';
           export const Page = () => <p css={{ color: red, ':hover': { color: blue } }} />;
         `,
       },
       root => ({
-        resolve: { alias: { '@colors': `${root}/src/colors` } },
+        resolve: { alias: { '@colors': `${root}/src/colors`, '#': '/src' } },
       }),
     );
     const css = await stylesheet(await transform('src/Page.jsx'));

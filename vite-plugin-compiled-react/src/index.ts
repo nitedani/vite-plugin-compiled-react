@@ -1,12 +1,20 @@
 import t from '@babel/types';
 import babel from '@babel/core';
-import compiledPlugin, { type PluginOptions } from '@compiled/babel-plugin';
+import compiledPlugin, {
+  type PluginOptions,
+  type Resolver,
+} from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
-// @ts-expect-error The package has no types.
-import moduleResolverPlugin from 'babel-plugin-module-resolver';
+import enhancedResolve from 'enhanced-resolve';
 import { createHash } from 'crypto';
+import path from 'node:path';
 import type { CssFunction } from '@compiled/react';
-import { createFilter, normalizePath, type Plugin } from 'vite';
+import {
+  createFilter,
+  normalizePath,
+  type Plugin,
+  type ResolvedConfig,
+} from 'vite';
 
 export type CompiledPluginOptions = Pick<
   PluginOptions,
@@ -42,6 +50,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
   const { extract, ...baseOptions } = options;
   let plugins: babel.PluginItem[] = [];
+  let resolver: Resolver;
   let extractPlugins: babel.PluginItem[] = [];
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
@@ -59,18 +68,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
       };
     },
     configResolved(config) {
-      const { root } = config;
-      const moduleResolverPluginAlias: Record<string, string> = {};
-      for (const { find, replacement } of config.resolve.alias) {
-        // babel-plugin-module-resolver's alias keys are strings, RegExp aliases are left out.
-        if (typeof find !== 'string' || !find || !replacement) {
-          continue;
-        }
-        moduleResolverPluginAlias[find] = replacement.startsWith(root + '/')
-          ? '.' + replacement.slice(root.length)
-          : replacement;
-      }
-
+      resolver = createResolver(config);
       plugins = [
         {
           visitor: {
@@ -88,11 +86,6 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             },
           },
         },
-        // Relative alias targets are relative to Vite's root, not to the working directory.
-        [
-          moduleResolverPlugin,
-          { root, cwd: root, alias: moduleResolverPluginAlias },
-        ],
       ];
 
       extractPlugins = [];
@@ -184,6 +177,7 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
             {
               importReact: false,
               ...baseOptions,
+              resolver,
               onIncludedFiles(files: string[]) {
                 for (const included of files.map(normalizePath)) {
                   dependents.set(included, (dependents.get(included) ?? new Set()).add(id));
@@ -218,3 +212,21 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
     },
   };
 };
+
+// Compiled resolves the imports it reads values from on its own, so it gets Vite's string aliases,
+// extensions and `/` paths relative to the root.
+function createResolver(config: ResolvedConfig): Resolver {
+  const resolveSync = enhancedResolve.create.sync({
+    alias: config.resolve.alias.flatMap(({ find, replacement }) =>
+      typeof find === 'string' ? [{ name: find, alias: replacement }] : [],
+    ),
+    roots: [config.root],
+    extensions: config.resolve.extensions,
+    conditionNames: ['import', 'module', 'default'],
+    mainFields: ['module', 'main'],
+  });
+  return {
+    resolveSync: (context, request) =>
+      resolveSync(path.dirname(context), request) as string,
+  };
+}
