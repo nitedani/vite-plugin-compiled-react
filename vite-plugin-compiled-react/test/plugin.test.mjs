@@ -200,6 +200,24 @@ describe('dev', () => {
       /color:blue/,
     );
   });
+
+  it('updates a .tsx module whose import TypeScript removed once Compiled inlined its value', async () => {
+    const fixture = await serve({
+      'src/colors.ts': `export const primary = 'red';`,
+      'src/tokens.ts': `export { primary } from './colors';`,
+      'src/App.tsx': `
+        import { primary } from './tokens';
+        export const App = () => <p css={{ color: primary }} />;
+        import.meta.hot.accept();
+      `,
+    });
+    assert.doesNotMatch(await fixture.transform('src/App.tsx'), /tokens/);
+    const sent = [];
+    fixture.server.environments.client.hot.send = payload => sent.push(payload);
+    await edit(fixture, 'src/colors.ts', `export const primary = 'blue';`);
+    await eventually(async () => JSON.stringify(sent), /"path":"\/src\/App\.tsx"/);
+    assert.match(await fixture.stylesheet(await fixture.transform('src/App.tsx')), /color:blue/);
+  });
 });
 
 async function edit({ root, server }, file, content) {

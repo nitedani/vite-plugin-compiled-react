@@ -190,13 +190,14 @@ export const useCache = () => {
         }
       }
     },
-    hotUpdate({ file }) {
-      // Vite only re-transforms the changed module, not the modules that copied its values.
+    hotUpdate({ file, modules }) {
+      // Vite re-transforms and updates the modules that copied the changed file's values only
+      // once they're returned here: some don't even import it any more.
       const { moduleGraph } = this.environment;
-      for (const id of dependents.get(file) ?? []) {
-        const mod = moduleGraph.getModuleById(id);
-        if (mod) moduleGraph.invalidateModule(mod);
-      }
+      const dependentModules = [...(dependents.get(file) ?? [])].flatMap(
+        id => moduleGraph.getModuleById(id) ?? [],
+      );
+      if (dependentModules.length) return [...modules, ...dependentModules];
     },
   };
 }
