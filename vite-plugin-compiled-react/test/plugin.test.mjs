@@ -104,16 +104,20 @@ describe('which modules are compiled', () => {
 describe('the stylesheet', () => {
   it("holds every module's rules once, in Compiled's order, and is fetched anew by a module adding rules", async () => {
     const { transform, stylesheet } = await serve({
-      'src/Wide.jsx': `export const Wide = () => <p css={{ '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+      'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green', '@media (min-width: 600px)': { color: 'blue' } }} />;`,
       'src/Card.jsx': `export const Card = () => <p css={{ color: 'red', '@media (min-width: 600px)': { color: 'blue' } }} />;`,
     });
-    const wide = await transform('src/Wide.jsx');
-    assert.equal(await stylesheet(wide), '@media (min-width:600px){._10s713q2{color:blue}}');
+    const banner = await transform('src/Banner.jsx');
+    assert.equal(
+      await stylesheet(banner),
+      '._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+    );
     const card = await transform('src/Card.jsx');
-    assert.notEqual(stylesheetImport(card), stylesheetImport(wide));
+    assert.notEqual(stylesheetImport(card), stylesheetImport(banner));
+    // Rules of the same kind are in the same order whichever module compiles first.
     assert.equal(
       await stylesheet(card),
-      '._syaz5scu{color:red}@media (min-width:600px){._10s713q2{color:blue}}',
+      '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
     );
   });
 

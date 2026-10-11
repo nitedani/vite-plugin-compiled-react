@@ -71,7 +71,9 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   const dependents = new Map<string, Set<string>>();
   const addDependent = (file: string, id: string) =>
     dependents.set(file, (dependents.get(file) ?? new Set()).add(id));
-  const stylesheet = () => sort([...rules].join(''));
+  // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
+  // stylesheet, and its file name, the same whatever order its modules compile in.
+  const stylesheet = () => sort([...rules].sort().join(''));
 
   return {
     name: 'vite-plugin-compiled-react',
