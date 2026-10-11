@@ -50,6 +50,9 @@ declare module 'react' {
 const stylesheetPrefix = 'virtual:vite-plugin-compiled-react:';
 // Extracted stylesheets by the hash of their CSS: modules with the same CSS share one stylesheet.
 const stylesheets = new Map<string, string>();
+// React Server environments that bundle @compiled/react have no createContext(), which this
+// module calls when imported.
+const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
@@ -68,35 +71,33 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           : (options.extract ?? true);
       resolver = createResolver(config);
     },
-    resolveId(id) {
-      if (id.startsWith(stylesheetPrefix)) {
-        return '\0' + id;
-      }
+    resolveId: {
+      filter: { id: new RegExp(`^${stylesheetPrefix}`) },
+      handler: id => '\0' + id,
     },
-    load(id) {
-      if (id.startsWith('\0' + stylesheetPrefix)) {
-        const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
-        return stylesheets.get(name!);
-      }
-      // React Server environments that bundle @compiled/react have no createContext(), which this
-      // module calls when imported.
-      if (
-        isReactServer(this.environment) &&
-        /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
-      ) {
-        return `export default {};
+    load: {
+      filter: { id: [new RegExp(`^\0${stylesheetPrefix}`), styleCacheRE] },
+      handler(id) {
+        if (styleCacheRE.test(id)) {
+          return isReactServer(this.environment)
+            ? `export default {};
 export const useCache = () => {
   throw new Error("[vite-plugin-compiled-react] Compiled's runtime can't render styles in React Server Components.");
-};`;
-      }
+};`
+            : undefined;
+        }
+        const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
+        return stylesheets.get(name!);
+      },
     },
     transform: {
+      // Like @vitejs/plugin-react: source modules, with or without a query.
+      filter: {
+        id: { include: /\.[jt]sx?(?:\?|$)/, exclude: /\/node_modules\// },
+        code: /css|@compiled\/react/,
+      },
       async handler(code, id) {
-        // Like @vitejs/plugin-react: source modules, with or without a query.
         const [file] = id.split('?') as [string];
-        if (id.includes('/node_modules/') || !/\.[jt]sx?$/.test(file)) {
-          return;
-        }
         // The css prop works in JSX without importing Compiled; anything else needs the import.
         const isJsxFile = /\.[jt]sx$/.test(file);
         if (!isJsxFile && !code.includes('@compiled/react')) {

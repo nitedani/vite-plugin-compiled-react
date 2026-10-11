@@ -34,8 +34,8 @@
         "enhanced-resolve": "^5.26.0"
     },
     "peerDependencies": {
-        "@compiled/react": ">=2.0.0",
-        "vite": ">=6.0.0"
+        "@compiled/react": "^2.0.0",
+        "vite": ">=6.3.0"
     },
     "devDependencies": {
         "@compiled/react": "^2.0.0",
