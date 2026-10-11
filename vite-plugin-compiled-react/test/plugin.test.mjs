@@ -257,6 +257,8 @@ async function serve(files, config = {}) {
     logLevel: 'silent',
     server: { middlewareMode: true, ws: false },
     optimizeDeps: { noDiscovery: true },
+    // Without @vitejs/plugin-react, Vite 6 and 7 compile JSX for React's classic runtime.
+    esbuild: { jsx: 'automatic', jsxDev: true },
     plugins: [compiled({ extract })],
     ...viteConfig,
   });
