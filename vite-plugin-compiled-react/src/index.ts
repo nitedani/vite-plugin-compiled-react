@@ -6,11 +6,11 @@ import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
 import type { CssFunction } from '@compiled/react';
-import { createFilter, type EnvironmentModuleNode, type Plugin } from 'vite';
+import { createFilter, normalizePath, type Plugin } from 'vite';
 
 export type CompiledPluginOptions = Pick<
   PluginOptions,
-  'cache' | 'optimizeCss' | 'onIncludedFiles' | 'addComponentName'
+  'cache' | 'optimizeCss' | 'addComponentName'
 > & {
   /**
   Extract the styles into CSS files, for `build` and `serve` separately or for both with `true`.
@@ -42,6 +42,10 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
   const { extract, ...baseOptions } = options;
   let plugins: babel.PluginItem[] = [];
+  let extractPlugins: babel.PluginItem[] = [];
+  // Compiled reads values from the modules a module imports, so each of those files maps to the
+  // modules whose output it is part of.
+  const dependents = new Map<string, Set<string>>();
 
   return {
     name: 'vite-plugin-compiled-react',
@@ -89,16 +93,16 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
           moduleResolverPlugin,
           { root, cwd: root, alias: moduleResolverPluginAlias },
         ],
-        [compiledPlugin, { importReact: false, ...baseOptions }],
       ];
 
+      extractPlugins = [];
       if (typeof extract === 'object' ? extract[config.command] : extract) {
-        plugins.push([
+        extractPlugins.push([
           compiledStripRuntimePlugin,
           { compiledRequireExclude: true },
         ]);
 
-        plugins.push({
+        extractPlugins.push({
           visitor: {
             Program: {
               exit(path, { file }) {
@@ -126,41 +130,12 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         return '\0' + source;
       }
     },
-    hotUpdate(ctx) {
-      const originalMods = new Set<EnvironmentModuleNode>();
-      for (const mod of ctx.modules) {
-        originalMods.add(mod);
-        for (const importer of mod.importers) {
-          originalMods.add(importer);
-        }
-      }
-
-      const virtualCssImporterMods = new Set<EnvironmentModuleNode>();
-      for (const cssId of virtualCssFiles.keys()) {
-        const mod = this.environment.moduleGraph.getModuleById(
-          resolvedVirtualCssPrefix + cssId,
-        );
-        if (!mod) {
-          continue;
-        }
-        virtualCssImporterMods.add(mod);
-        for (const importer of mod.importers) {
-          virtualCssImporterMods.add(importer);
-        }
-      }
-
-      const modsToInvalidate = new Set<EnvironmentModuleNode>();
-      for (const mod of originalMods) {
-        if (virtualCssImporterMods.has(mod)) {
-          modsToInvalidate.add(mod);
-          for (const importer of mod.importers) {
-            modsToInvalidate.add(importer);
-          }
-        }
-      }
-
-      for (const mod of modsToInvalidate) {
-        this.environment.moduleGraph.invalidateModule(mod);
+    hotUpdate({ file }) {
+      // Vite only re-transforms the changed module, not the modules that copied its values.
+      const { moduleGraph } = this.environment;
+      for (const id of dependents.get(file) ?? []) {
+        const mod = moduleGraph.getModuleById(id);
+        if (mod) moduleGraph.invalidateModule(mod);
       }
     },
     load(id) {
@@ -202,7 +177,22 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         filename: id,
         sourceFileName: filepath,
         sourceMaps: true,
-        plugins,
+        plugins: [
+          ...plugins,
+          [
+            compiledPlugin,
+            {
+              importReact: false,
+              ...baseOptions,
+              onIncludedFiles(files: string[]) {
+                for (const included of files.map(normalizePath)) {
+                  dependents.set(included, (dependents.get(included) ?? new Set()).add(id));
+                }
+              },
+            },
+          ],
+          ...extractPlugins,
+        ],
         // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
         // understand them, otherwise annotations and `interface` are syntax errors here. JSX
         // stays off in .ts files, where it would reject `<string>value` type assertions.

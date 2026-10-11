@@ -111,7 +111,8 @@ describe('React Server environments', () => {
 describe('dev', () => {
   it('re-compiles a module when a module it read values from changes', async () => {
     const { root, server, transform, stylesheet } = await serve({
-      'src/colors.ts': `export const color = 'red';`,
+      'src/palette.ts': `export const color = 'red';`,
+      'src/colors.ts': `export { color } from './palette';`,
       'src/Card.jsx': `
         import { color } from './colors';
         export const Card = () => <p css={{ color }} />;
@@ -119,9 +120,9 @@ describe('dev', () => {
     });
     assert.match(await stylesheet(await transform('src/Card.jsx')), /color:red/);
 
-    const colors = join(root, 'src/colors.ts');
-    await writeFile(colors, `export const color = 'blue';`);
-    server.watcher.emit('change', colors);
+    const palette = join(root, 'src/palette.ts');
+    await writeFile(palette, `export const color = 'blue';`);
+    server.watcher.emit('change', palette);
     let css;
     for (let i = 0; i < 50 && !/color:blue/.test(css); i++) {
       await new Promise(resolve => setTimeout(resolve, 20));
