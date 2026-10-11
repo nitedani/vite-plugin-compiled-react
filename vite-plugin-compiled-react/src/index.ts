@@ -61,10 +61,6 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
-    config: () => ({
-      // https://github.com/vikejs/vike/issues/621
-      ssr: { noExternal: [/@compiled\/react/] },
-    }),
     configResolved(config) {
       extract =
         typeof options.extract === 'object'
@@ -82,7 +78,8 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
         const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
         return stylesheets.get(name!);
       }
-      // React Server environments have no createContext(), which this module calls when imported.
+      // React Server environments that bundle @compiled/react have no createContext(), which this
+      // module calls when imported.
       if (
         isReactServer(this.environment) &&
         /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
