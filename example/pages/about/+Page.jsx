@@ -6,7 +6,7 @@ function Page() {
   return (
     <>
       <h1>About</h1>
-      <p>Example of using Vike.</p>
+      <p css={{ color: 'gray' }}>Example of using Vike.</p>
     </>
   )
 }

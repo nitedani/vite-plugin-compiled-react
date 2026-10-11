@@ -5,15 +5,17 @@ import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
 import stripRuntimeBabelPlugin, {
   type BabelFileMetadata,
 } from '@compiled/babel-plugin-strip-runtime';
+import { sort } from '@compiled/css';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import {
   normalizePath,
+  preprocessCSS,
   type Environment,
   type Plugin,
   type ResolvedConfig,
+  type ViteDevServer,
 } from 'vite';
 
 export type CompiledPluginOptions = {
@@ -49,9 +51,13 @@ declare module 'react' {
   }
 }
 
-const stylesheetPrefix = 'virtual:vite-plugin-compiled-react:';
-// Extracted stylesheets by the hash of their CSS: modules with the same CSS share one stylesheet.
-const stylesheets = new Map<string, string>();
+const stylesheetName = 'vite-plugin-compiled-react.css';
+const stylesheetId = `virtual:${stylesheetName}`;
+const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
+// Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so all
+// of an app's extracted rules go into one stylesheet. Its environments build with separate plugin
+// instances, so the rules are kept by app root.
+const rulesByRoot = new Map<string, Set<string>>();
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -59,9 +65,12 @@ const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
   let resolver: Resolver;
+  let rules: Set<string>;
+  let server: ViteDevServer | undefined;
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
+  const stylesheet = () => sort([...rules].join(''));
 
   return {
     name: 'vite-plugin-compiled-react',
@@ -72,13 +81,18 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           ? options.extract[config.command]
           : (options.extract ?? true);
       resolver = createResolver(config);
+      rules = rulesByRoot.get(config.root) ?? new Set();
+      rulesByRoot.set(config.root, rules);
+    },
+    configureServer(devServer) {
+      server = devServer;
     },
     resolveId: {
-      filter: { id: new RegExp(`^${stylesheetPrefix}`) },
+      filter: { id: /^virtual:vite-plugin-compiled-react\.css$/ },
       handler: id => '\0' + id,
     },
     load: {
-      filter: { id: [new RegExp(`^\0${stylesheetPrefix}`), styleCacheRE] },
+      filter: { id: [stylesheetRE, styleCacheRE] },
       handler(id) {
         if (styleCacheRE.test(id)) {
           return isReactServer(this.environment)
@@ -88,8 +102,7 @@ export const useCache = () => {
 };`
             : undefined;
         }
-        const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
-        return stylesheets.get(name!);
+        return stylesheet();
       },
     },
     transform: {
@@ -142,15 +155,39 @@ export const useCache = () => {
               stripRuntimeBabelPlugin,
               { compiledRequireExclude: true },
             ],
-            extractStyles && importStylesheet,
+            extractStyles && server && importStylesheet,
             // `styled` compiles to JSX, which Vite doesn't expect in .ts and .js files.
             !isJsxFile && [transformJsxBabelPlugin, { runtime: 'automatic' }],
           ].filter(Boolean) as PluginItem[],
         });
-        if (result?.code) {
-          return { code: result.code, map: result.map };
-        }
+        if (!result?.code) return;
+        const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
+        const ruleCount = rules.size;
+        for (const rule of styleRules) rules.add(rule);
+        if (server && rules.size > ruleCount) refreshStylesheet(server);
+        return { code: result.code, map: result.map };
       },
+    },
+    async generateBundle(_, bundle) {
+      const { config } = this.environment;
+      // React Server environments build before the client, whose stylesheet has their rules too.
+      if (!rules.size || !config.build.emitAssets || isReactServer(this.environment)) {
+        return;
+      }
+      const { code } = await preprocessCSS(
+        stylesheet(),
+        path.join(config.root, stylesheetName),
+        config,
+      );
+      const fileName = this.getFileName(
+        this.emitFile({ type: 'asset', name: stylesheetName, source: code }),
+      );
+      // Every page links it: HTML and manifest-based frameworks link the CSS of their entry chunks.
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type === 'chunk' && chunk.isEntry) {
+          chunk.viteMetadata!.importedCss.add(fileName);
+        }
+      }
     },
     hotUpdate({ file }) {
       // Vite only re-transforms the changed module, not the modules that copied its values.
@@ -181,7 +218,8 @@ function enableCssProp({ types: t }: typeof babel): PluginObj {
   };
 }
 
-// Imports the rules that @compiled/babel-plugin-strip-runtime moved to the file's metadata.
+// In dev, modules with rules, which @compiled/babel-plugin-strip-runtime moved to the file's
+// metadata, import the stylesheet. A build links it on every page instead.
 function importStylesheet({ types: t }: typeof babel): PluginObj {
   return {
     visitor: {
@@ -189,17 +227,26 @@ function importStylesheet({ types: t }: typeof babel): PluginObj {
         exit(program, { file }) {
           const { styleRules } = file.metadata as unknown as BabelFileMetadata;
           if (!styleRules?.length) return;
-          const css = styleRules.join('\n');
-          const name = `${createHash('md5').update(css).digest('hex').slice(0, 16)}.css`;
-          stylesheets.set(name, css);
           program.unshiftContainer(
             'body',
-            t.importDeclaration([], t.stringLiteral(stylesheetPrefix + name)),
+            t.importDeclaration([], t.stringLiteral(stylesheetId)),
           );
         },
       },
     },
   };
+}
+
+// The stylesheet is out of date in every environment once a module adds rules. Its new URL makes
+// the browser fetch it before running that module, and every module transformed afterwards.
+function refreshStylesheet(server: ViteDevServer) {
+  const timestamp = Date.now();
+  for (const { moduleGraph } of Object.values(server.environments)) {
+    for (const mod of moduleGraph.getModulesByFile('\0' + stylesheetId) ?? []) {
+      moduleGraph.invalidateModule(mod);
+      mod.lastHMRTimestamp = timestamp;
+    }
+  }
 }
 
 // Compiled resolves the imports it reads values from on its own, so it gets Vite's string aliases,

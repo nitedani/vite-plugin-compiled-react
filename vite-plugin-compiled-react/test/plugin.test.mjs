@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createRunnableDevEnvironment, createServer } from 'vite';
+import { build, createRunnableDevEnvironment, createServer } from 'vite';
 import { compiled } from '../lib/index.js';
 
 // Fixtures live in the package, so they resolve @compiled/react and react from its node_modules.
@@ -101,6 +101,49 @@ describe('which modules are compiled', () => {
   });
 });
 
+describe('the stylesheet', () => {
+  it("holds every module's rules once, in Compiled's order, and is fetched anew by a module adding rules", async () => {
+    const { transform, stylesheet } = await serve({
+      'src/Wide.jsx': `export const Wide = () => <p css={{ '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+      'src/Card.jsx': `export const Card = () => <p css={{ color: 'red', '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+    });
+    const wide = await transform('src/Wide.jsx');
+    assert.equal(await stylesheet(wide), '@media (min-width:600px){._10s713q2{color:blue}}');
+    const card = await transform('src/Card.jsx');
+    assert.notEqual(stylesheetImport(card), stylesheetImport(wide));
+    assert.equal(
+      await stylesheet(card),
+      '._syaz5scu{color:red}@media (min-width:600px){._10s713q2{color:blue}}',
+    );
+  });
+
+  it('is linked by the HTML in a build, with the rules of lazily loaded modules', async () => {
+    const root = await fixture({
+      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
+      'src/main.jsx': `
+        export const Card = () => <p css={{ color: 'red', '@media (min-width: 600px)': { color: 'blue' } }} />;
+        import('./About.jsx');
+      `,
+      'src/About.jsx': `export const About = () => <p css={{ color: 'red', ':hover': { color: 'green' } }} />;`,
+    });
+    const { output } = await build({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [compiled()],
+      build: { write: false, rollupOptions: { external: [/^react/, /^@compiled\/react/] } },
+    });
+    const html = output.find(({ fileName }) => fileName === 'index.html').source;
+    const links = [...html.matchAll(/<link rel="stylesheet"[^>]* href="\/([^"]+)"/g)];
+    assert.equal(links.length, 1);
+    const sheet = output.find(({ fileName }) => fileName === links[0][1]).source;
+    assert.equal(
+      sheet,
+      '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+    );
+  });
+});
+
 describe('React Server environments', () => {
   it('extract, and import the Compiled runtime', async () => {
     const { server } = await serve(
@@ -147,12 +190,21 @@ describe('dev', () => {
   });
 });
 
-async function serve(files, config = {}) {
+async function fixture(files) {
   const root = await mkdtemp(join(packageDir, '.fixture-'));
   for (const [file, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await writeFile(join(root, file), content);
   }
+  return root;
+}
+
+function stylesheetImport(code) {
+  return code.match(/import "(\/@id\/__x00__virtual:vite-plugin-compiled-react\.css[^"]*)"/)?.[1];
+}
+
+async function serve(files, config = {}) {
+  const root = await fixture(files);
   const { extract, ...viteConfig } =
     typeof config === 'function' ? config(root) : config;
   const server = await createServer({
@@ -171,8 +223,8 @@ async function serve(files, config = {}) {
     server,
     transform: async file => (await client.transformRequest(`/${file}`)).code,
     stylesheet: async code => {
-      const [, id] = code.match(/"\/@id\/__x00__([^"]+\.css)"/);
-      return (await client.transformRequest(`\0${id}?direct`)).code;
+      assert.ok(stylesheetImport(code));
+      return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
     },
   };
 }

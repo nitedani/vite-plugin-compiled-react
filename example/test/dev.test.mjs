@@ -23,7 +23,7 @@ describe('dev', () => {
     assertCompiled(html);
     // The browser requests the stylesheet's id under /@id/, with \0 encoded.
     const [, id] = html.match(
-      /"\/@id\/__x00__(virtual:vite-plugin-compiled-react:[^"]+)"/,
+      /"\/@id\/__x00__(virtual:vite-plugin-compiled-react\.css[^"]*)"/,
     );
     const { code } = await server.environments.client.transformRequest(
       '\0' + id,
