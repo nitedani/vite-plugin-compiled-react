@@ -1,30 +1,35 @@
-import t from '@babel/types';
-import babel from '@babel/core';
-import compiledPlugin, {
-  type PluginOptions,
-  type Resolver,
-} from '@compiled/babel-plugin';
-import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
-import enhancedResolve from 'enhanced-resolve';
-import { createHash } from 'crypto';
-import path from 'node:path';
+import babel, { type PluginItem, type PluginObj } from '@babel/core';
+import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
+import stripRuntimeBabelPlugin, {
+  type BabelFileMetadata,
+} from '@compiled/babel-plugin-strip-runtime';
 import type { CssFunction } from '@compiled/react';
-import {
-  createFilter,
-  normalizePath,
-  type Plugin,
-  type ResolvedConfig,
-} from 'vite';
+import enhancedResolve from 'enhanced-resolve';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { normalizePath, type Plugin, type ResolvedConfig } from 'vite';
 
-export type CompiledPluginOptions = Pick<
-  PluginOptions,
-  'cache' | 'optimizeCss' | 'addComponentName'
-> & {
+export type CompiledPluginOptions = {
   /**
-  Extract the styles into CSS files, for `build` and `serve` separately or for both with `true`.
-  Defaults to false.
+   * Extract the styles into CSS files, which Vite bundles and links like any other CSS.
+   * With `false`, Compiled's runtime inserts them while rendering.
+   * `{ build, serve }` decides per Vite command.
+   *
+   * @default false
    */
-  extract?: { build: boolean; serve: boolean } | boolean;
+  extract?: boolean | { build: boolean; serve: boolean };
+  /**
+   * Add the component name as a class name to `styled` components outside production.
+   *
+   * @default false
+   */
+  addComponentName?: boolean;
+  /**
+   * Minify the generated CSS rules.
+   *
+   * @default true
+   */
+  optimizeCss?: boolean;
 };
 
 declare module 'react' {
@@ -36,22 +41,13 @@ declare module 'react' {
   }
 }
 
-const virtualCssFiles = new Map<string, string>();
-const defaultIncludeRE = /\.[tj]sx?$/;
+const stylesheetPrefix = 'virtual:vite-plugin-compiled-react:';
+// Extracted stylesheets by the hash of their CSS: modules with the same CSS share one stylesheet.
+const stylesheets = new Map<string, string>();
 
-export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
-  const filter = createFilter(defaultIncludeRE);
-  // Extracted stylesheets are keyed by this hash: two with the same hash would share one module.
-  const hash = (code: string) => {
-    return createHash('md5').update(code).digest('hex').slice(0, 16);
-  };
-
-  const virtualCssFileName = 'virtual:vite-plugin-compiled-react';
-  const resolvedVirtualCssPrefix = `\0${virtualCssFileName}:`;
-  const { extract, ...baseOptions } = options;
-  let plugins: babel.PluginItem[] = [];
+export function compiled(options: CompiledPluginOptions = {}): Plugin {
+  let extract: boolean;
   let resolver: Resolver;
-  let extractPlugins: babel.PluginItem[] = [];
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
@@ -59,69 +55,93 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
   return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
-    config() {
-      return {
-        ssr: {
-          // https://github.com/vikejs/vike/issues/621
-          noExternal: [/@compiled\/react/],
-        },
-      };
-    },
+    config: () => ({
+      // https://github.com/vikejs/vike/issues/621
+      ssr: { noExternal: [/@compiled\/react/] },
+    }),
     configResolved(config) {
+      extract =
+        typeof options.extract === 'object'
+          ? options.extract[config.command]
+          : !!options.extract;
       resolver = createResolver(config);
-      plugins = [
-        {
-          visitor: {
-            Program(path) {
-              // Vike's ?extractAssets modules are reduced to their CSS imports.
-              if (/[?&]extractAssets(&|$)/.test(this.filename)) {
-                return;
-              }
-              // Compiled only compiles the css prop in files importing @compiled/react. A new
-              // node per file: an AST node must not be shared between files.
-              path.unshiftContainer(
-                'body',
-                t.importDeclaration([], t.stringLiteral('@compiled/react')),
-              );
-            },
-          },
-        },
-      ];
-
-      extractPlugins = [];
-      if (typeof extract === 'object' ? extract[config.command] : extract) {
-        extractPlugins.push([
-          compiledStripRuntimePlugin,
-          { compiledRequireExclude: true },
-        ]);
-
-        extractPlugins.push({
-          visitor: {
-            Program: {
-              exit(path, { file }) {
-                const styleRules = file.metadata.styleRules;
-                if (styleRules.length) {
-                  const code = styleRules.join('\n');
-                  const fileId = hash(code) + '.css';
-                  virtualCssFiles.set(fileId, code);
-                  path.unshiftContainer(
-                    'body',
-                    t.importDeclaration(
-                      [],
-                      t.stringLiteral(`${virtualCssFileName}:${fileId}`),
-                    ),
-                  );
-                }
-              },
-            },
-          },
-        });
+    },
+    resolveId(id) {
+      if (id.startsWith(stylesheetPrefix)) {
+        return '\0' + id;
       }
     },
-    resolveId(source) {
-      if (source.startsWith(`${virtualCssFileName}:`)) {
-        return '\0' + source;
+    load(id) {
+      if (id.startsWith('\0' + stylesheetPrefix)) {
+        const [name] = id.slice(1 + stylesheetPrefix.length).split('?');
+        return stylesheets.get(name!);
       }
+      if (
+        (this.environment.config.resolve.conditions.includes('react-server') ||
+          this.environment.name === 'rsc') &&
+        /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
+      ) {
+        return `export default {};
+export const useCache = () => {
+  throw new Error("Please set extract: true in compiled plugin options for RSC support");
+};`;
+      }
+    },
+    transform: {
+      async handler(code, id) {
+        // Like @vitejs/plugin-react: source modules, with or without a query.
+        const [file] = id.split('?') as [string];
+        if (id.includes('/node_modules/') || !/\.[jt]sx?$/.test(file)) {
+          return;
+        }
+        // The css prop works in JSX without importing Compiled; anything else needs the import.
+        const isJsxFile = /\.[jt]sx$/.test(file);
+        if (!isJsxFile && !code.includes('@compiled/react')) {
+          return;
+        }
+        const result = await babel.transformAsync(code, {
+          filename: file,
+          sourceMaps: true,
+          // React's dev runtime reports the line numbers its JSX transform sees.
+          retainLines: true,
+          configFile: false,
+          babelrc: false,
+          // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files,
+          // where it would reject `<string>value` type assertions.
+          parserOpts: {
+            plugins: file.endsWith('.ts')
+              ? ['typescript']
+              : file.endsWith('.tsx')
+                ? ['jsx', 'typescript']
+                : ['jsx'],
+          },
+          plugins: [
+            isJsxFile && enableCssProp,
+            [
+              compiledBabelPlugin,
+              {
+                importReact: false,
+                addComponentName: options.addComponentName,
+                optimizeCss: options.optimizeCss,
+                resolver,
+                onIncludedFiles(files: string[]) {
+                  for (const included of files.map(normalizePath)) {
+                    dependents.set(included, (dependents.get(included) ?? new Set()).add(id));
+                  }
+                },
+              },
+            ],
+            extract && [
+              stripRuntimeBabelPlugin,
+              { compiledRequireExclude: true },
+            ],
+            extract && importStylesheet,
+          ].filter(Boolean) as PluginItem[],
+        });
+        if (result?.code) {
+          return { code: result.code, map: result.map };
+        }
+      },
     },
     hotUpdate({ file }) {
       // Vite only re-transforms the changed module, not the modules that copied its values.
@@ -131,89 +151,43 @@ export const compiled = (options: CompiledPluginOptions = {}): Plugin => {
         if (mod) moduleGraph.invalidateModule(mod);
       }
     },
-    load(id) {
-      if (id.startsWith(resolvedVirtualCssPrefix)) {
-        const [fileId] = id.slice(resolvedVirtualCssPrefix.length).split('?');
-        return virtualCssFiles.get(fileId);
-      }
+  };
+}
 
-      if (
-        (this.environment.config.resolve.conditions.includes('react-server') ||
-          this.environment.name === 'rsc') &&
-        /@compiled\/react\/dist\/.*\/style-cache.js/.test(id)
-      ) {
-        return `export default {};
-                export const useCache = () => {
-                  throw new Error("Please set extract: true in compiled plugin options for RSC support");
-                };
-                `;
-      }
-    },
-    async transform(code, id) {
-      // Keep the same default boundary as @vitejs/plugin-react: dependencies are excluded, the
-      // query is stripped before filtering, and plain .js/.ts files are eligible as well.
-      if (id.includes('/node_modules/')) {
-        return;
-      }
-      const [filepath] = id.split('?');
-      if (!filepath || !filter(filepath)) {
-        return;
-      }
-      if (
-        !filepath.endsWith('x') &&
-        !code.includes("'@compiled/react'") &&
-        !code.includes('"@compiled/react"')
-      ) {
-        return;
-      }
-      const res = await babel.transformAsync(code, {
-        filename: id,
-        sourceFileName: filepath,
-        sourceMaps: true,
-        // React's dev runtime reports the line numbers its JSX transform sees.
-        retainLines: true,
-        plugins: [
-          ...plugins,
-          [
-            compiledPlugin,
-            {
-              importReact: false,
-              ...baseOptions,
-              resolver,
-              onIncludedFiles(files: string[]) {
-                for (const included of files.map(normalizePath)) {
-                  dependents.set(included, (dependents.get(included) ?? new Set()).add(id));
-                }
-              },
-            },
-          ],
-          ...extractPlugins,
-        ],
-        // Parse only: TypeScript and JSX are left for Vite's own transform. Babel must still
-        // understand them, otherwise annotations and `interface` are syntax errors here. JSX
-        // stays off in .ts files, where it would reject `<string>value` type assertions.
-        parserOpts: {
-          plugins: filepath.endsWith('.ts')
-            ? ['typescript']
-            : filepath.endsWith('.tsx')
-              ? ['jsx', 'typescript']
-              : ['jsx'],
-        },
-        configFile: false,
-        babelrc: false,
-      });
-
-      if (!res || !res.code) {
-        return;
-      }
-
-      return {
-        code: res.code,
-        map: res.map,
-      };
+// Compiled only compiles the css prop in modules importing @compiled/react.
+function enableCssProp({ types: t }: typeof babel): PluginObj {
+  return {
+    visitor: {
+      Program(program) {
+        program.unshiftContainer(
+          'body',
+          t.importDeclaration([], t.stringLiteral('@compiled/react')),
+        );
+      },
     },
   };
-};
+}
+
+// Imports the rules that @compiled/babel-plugin-strip-runtime moved to the file's metadata.
+function importStylesheet({ types: t }: typeof babel): PluginObj {
+  return {
+    visitor: {
+      Program: {
+        exit(program, { file }) {
+          const { styleRules } = file.metadata as unknown as BabelFileMetadata;
+          if (!styleRules?.length) return;
+          const css = styleRules.join('\n');
+          const name = `${createHash('md5').update(css).digest('hex').slice(0, 16)}.css`;
+          stylesheets.set(name, css);
+          program.unshiftContainer(
+            'body',
+            t.importDeclaration([], t.stringLiteral(stylesheetPrefix + name)),
+          );
+        },
+      },
+    },
+  };
+}
 
 // Compiled resolves the imports it reads values from on its own, so it gets Vite's string aliases,
 // extensions and `/` paths relative to the root.
