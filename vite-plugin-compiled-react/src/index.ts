@@ -2,8 +2,10 @@ import t from '@babel/types';
 import babel from '@babel/core';
 import compiledPlugin, { type PluginOptions } from '@compiled/babel-plugin';
 import compiledStripRuntimePlugin from '@compiled/babel-plugin-strip-runtime';
+// @ts-expect-error The package has no types.
 import moduleResolverPlugin from 'babel-plugin-module-resolver';
 import { createHash } from 'crypto';
+import type { CssFunction } from '@compiled/react';
 import { createFilter, type EnvironmentModuleNode, type Plugin } from 'vite';
 
 export type CompiledPluginOptions = Pick<
@@ -16,6 +18,15 @@ export type CompiledPluginOptions = Pick<
    */
   extract?: { build: boolean; serve: boolean } | boolean;
 };
+
+declare module 'react' {
+  interface HTMLAttributes<T> {
+    css?: CssFunction | CssFunction[];
+  }
+  interface SVGAttributes<T> {
+    css?: CssFunction | CssFunction[];
+  }
+}
 
 const virtualCssFiles = new Map<string, string>();
 const defaultIncludeRE = /\.[tj]sx?$/;

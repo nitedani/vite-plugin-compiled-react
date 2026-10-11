@@ -4,6 +4,16 @@
     "license": "MIT",
     "type": "module",
     "main": "lib/index.js",
+    "types": "./lib/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
     "keywords": [
         "@compiled/react",
         "vite"
@@ -13,16 +23,10 @@
         "url": "https://github.com/nitedani/vite-plugin-compiled-react"
     },
     "scripts": {
-        "build": "rimraf lib && tsc -b && cat src/types.d.ts >> lib/index.d.ts",
-        "dev": "tsc -w",
+        "build": "rimraf lib && tsc -p tsconfig.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test",
         "test": "pnpm build && node --test test/*.test.mjs"
     },
-    "exports": {
-        "import": "./lib/index.js"
-    },
-    "files": [
-        "lib"
-    ],
     "dependencies": {
         "@babel/core": "^7.29.7",
         "@babel/types": "^7.29.8",
