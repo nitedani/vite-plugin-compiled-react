@@ -62,11 +62,10 @@ const stylesheetUrl = browserUrl(stylesheetId);
 // In dev, browsers get the stylesheet from a script that keeps the newest of its versions.
 const browserStylesheetId = 'virtual:vite-plugin-compiled-react.js';
 const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
-// In a library, a module's stylesheet is a placeholder rule until the library plugin fills it in.
-const moduleStylesheetIdRE = /\.css\?vite-plugin-compiled-react=(\d+)$/;
-const moduleStylesheet = (index: string) =>
-  `.vite-plugin-compiled-react-${index}{--vite-plugin-compiled-react:${index}}`;
-const moduleStylesheetRE = /\.vite-plugin-compiled-react-(\d+)\s*\{[^}]*\}/g;
+// In a library, the stylesheet of a module, named after its whole file name: Vite takes one ending
+// in `.module.css` for a CSS module.
+const moduleStylesheetId = (file: string) => `${file}.css?vite-plugin-compiled-react`;
+const moduleStylesheetIdRE = /\.css\?vite-plugin-compiled-react$/;
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -79,8 +78,9 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
   // all extracted rules go into one stylesheet.
   const rules = new Set<string>();
   // In a library, each module with rules imports a stylesheet of its own, so its rules go wherever
-  // Vite puts the CSS of its chunk, sorted with the other rules there.
-  const libraryModuleRules: string[][] = [];
+  // Vite puts the CSS of its chunk. Vite has no hook to sort a chunk's CSS before minifying it, so
+  // the rules of different modules keep the order Vite puts their modules in.
+  const moduleRules = new Map<string, string[]>();
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
@@ -90,9 +90,8 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
   // stylesheet, and its file name, the same whatever order its modules compile in.
   const stylesheet = (sheetRules: Iterable<string> = rules) =>
     sort([...new Set(sheetRules)].sort().join(''));
-  const processStylesheet = async (config: ResolvedConfig, sheetRules?: Iterable<string>) =>
-    (await preprocessCSS(stylesheet(sheetRules), path.join(config.root, stylesheetName), config))
-      .code;
+  const processStylesheet = async (config: ResolvedConfig) =>
+    (await preprocessCSS(stylesheet(), path.join(config.root, stylesheetName), config)).code;
 
   const plugin: Plugin = {
     name: 'vite-plugin-compiled-react',
@@ -137,8 +136,7 @@ export const useCache = () => {
             : undefined;
         }
         if (stylesheetRE.test(id)) return stylesheet();
-        const moduleIndex = id.match(moduleStylesheetIdRE)?.[1];
-        if (moduleIndex) return moduleStylesheet(moduleIndex);
+        if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
         const version = rules.size;
         const code = await processStylesheet(this.environment.config);
         // A page can run an older version after a newer one: the version with more rules wins.
@@ -217,10 +215,9 @@ import.meta.hot.accept();`;
         if (server && rules.size > ruleCount) refreshStylesheet(server);
         let output = result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
-          const index = libraryModuleRules.push(styleRules) - 1;
-          // Named after the module, which names its file when Vite preserves the modules. Imported
-          // last, so the rules follow the CSS of the module's imports.
-          const sheet = `${file.replace(/\.[^./]+$/, '')}.css?vite-plugin-compiled-react=${index}`;
+          const sheet = moduleStylesheetId(file);
+          moduleRules.set(sheet, styleRules);
+          // Imported last, so the rules follow the CSS of the module's imports.
           output += `\nimport ${JSON.stringify(sheet)};`;
         }
         return { code: output, map: result.map };
@@ -259,51 +256,7 @@ import.meta.hot.accept();`;
     },
   };
 
-  // Vite writes a library's CSS to files, or into the chunks that insert it. There, the module
-  // stylesheets give way to their modules' rules, sorted, in place of the last of them.
-  const fillModuleStylesheets = async (
-    config: ResolvedConfig,
-    css: string,
-    encode: (sheet: string) => string = sheet => sheet,
-  ) => {
-    const sheets = [...css.matchAll(moduleStylesheetRE)];
-    if (!sheets.length) return;
-    const sheet = await processStylesheet(
-      config,
-      sheets.flatMap(([, index]) => libraryModuleRules[Number(index)]!),
-    );
-    let remaining = sheets.length;
-    return css.replace(moduleStylesheetRE, () => (--remaining ? '' : encode(sheet)));
-  };
-
-  const library: Plugin = {
-    name: 'vite-plugin-compiled-react:library',
-    // Vite's app builder can create the plugins again for each environment, and keeps the first
-    // instance of shared ones only: this one reads the rules of the first instance of the plugin.
-    sharedDuringBuild: true,
-    renderChunk: {
-      order: 'post',
-      async handler(code) {
-        // Inside a string literal, whichever quotes a minifier gave it.
-        const filled = await fillModuleStylesheets(this.environment.config, code, sheet =>
-          JSON.stringify(sheet).slice(1, -1).replace(/['`$]/g, '\\$&'),
-        );
-        return filled === undefined ? null : { code: filled, map: null };
-      },
-    },
-    generateBundle: {
-      order: 'post',
-      async handler(_, bundle) {
-        for (const output of Object.values(bundle)) {
-          if (output.type !== 'asset' || typeof output.source !== 'string') continue;
-          output.source =
-            (await fillModuleStylesheets(this.environment.config, output.source)) ?? output.source;
-        }
-      },
-    },
-  };
-
-  return [plugin, library];
+  return [plugin];
 }
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it

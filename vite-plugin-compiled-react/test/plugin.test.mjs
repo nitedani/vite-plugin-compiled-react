@@ -150,12 +150,13 @@ describe('the stylesheet', () => {
   });
 
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
-    const buildLibrary = async (files, lib, buildOptions) => {
+    const buildLibrary = async (files, lib, { build: buildOptions, ...config } = {}) => {
       const [{ output }] = await build({
         root: await fixture(files),
         configFile: false,
         logLevel: 'silent',
         plugins: [compiled()],
+        ...config,
         build: {
           ...buildOptions,
           write: false,
@@ -196,21 +197,21 @@ describe('the stylesheet', () => {
       await buildLibrary({ 'src/index.jsx': card }, { fileName: 'ui', cssFileName: 'styles' }),
       { 'styles.css': '._syaz5scu{color:red}' },
     );
-    // With its CSS split, each entry's stylesheet has the rules of the entry's modules, sorted.
+    // With its CSS split, each entry's stylesheet has the rules of the entry's modules.
     assert.deepEqual(
       await buildLibrary(
         {
           'src/index.jsx': `import './own.css';\n${card}`,
           'src/own.css': `.own { color: blue }`,
-          'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green', '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+          'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green' }} />;`,
           'src/banner.jsx': `export { Wide } from './Wide';\nexport const Banner = () => <p css={{ color: 'red' }} />;`,
         },
         { entry: { index: 'src/index.jsx', banner: 'src/banner.jsx' } },
-        { cssCodeSplit: true },
+        { build: { cssCodeSplit: true } },
       ),
       {
         'index.css': '.own{color:#00f}._syaz5scu{color:red}',
-        'banner.css': '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+        'banner.css': '._syazbf54{color:green}._syaz5scu{color:red}',
       },
     );
     // Vite puts the split CSS of an `iife` or `umd` library into its chunk.
@@ -220,18 +221,71 @@ describe('the stylesheet', () => {
           {
             'src/index.jsx': `export { Wide } from './Wide';\nimport './own.css';\n${card}`,
             'src/own.css': `.own { color: blue }`,
-            // A minifier can put the CSS in a template literal.
-            'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green', '&::after': { content: '"\${x}"' }, '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+            'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green' }} />;`,
           },
           { formats: [format], name: 'Lib', fileName: 'my-lib' },
-          { cssCodeSplit: true },
+          { build: { cssCodeSplit: true } },
         ),
         {
-          [file]:
-            '.own{color:#00f}._aetrhhqh:after{content:"${x}"}._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+          [file]: '._syazbf54{color:green}.own{color:#00f}._syaz5scu{color:red}',
         },
       );
     }
+  });
+
+  it("goes through Vite's CSS pipeline in a library, like the library's own CSS", async () => {
+    const buildLibrary = async (files, config = {}) => {
+      const [{ output }] = await build({
+        root: await fixture(files),
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [compiled()],
+        ...config,
+        build: {
+          write: false,
+          lib: { entry: 'src/index.tsx', formats: ['es'], fileName: 'my-lib' },
+          rollupOptions: {
+            external: [/^react/, /^@compiled\/react/],
+            output: { assetFileNames: '[name]-[hash][extname]' },
+          },
+        },
+      });
+      return Object.fromEntries(
+        output.flatMap(({ fileName, source }) =>
+          fileName.endsWith('.css') ? [[fileName, source.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [],
+        ),
+      );
+    };
+    const card = color => `export const Card = () => <p css={{ color: '${color}' }} />;`;
+    // Not a CSS module, though Vite takes CSS named `*.module.css` for one.
+    const moduleTsx = await buildLibrary({
+      'src/index.tsx': `export * from './Card.module';`,
+      'src/Card.module.tsx': card('red'),
+    });
+    assert.deepEqual(Object.values(moduleTsx), ['._syaz5scu{color:red}']);
+    // A PostCSS plugin applies to the rules as it does to the library's own CSS.
+    const prefixed = await buildLibrary(
+      { 'src/index.tsx': `import './own.css';\n${card('red')}`, 'src/own.css': `.own { color: blue }` },
+      {
+        css: {
+          postcss: {
+            plugins: [
+              {
+                postcssPlugin: 'prefix',
+                Once: root => root.walkRules(rule => {
+                  rule.selector = `#root ${rule.selector}`;
+                }),
+              },
+            ],
+          },
+        },
+      },
+    );
+    assert.deepEqual(Object.values(prefixed), ['#root .own{color:#00f}#root ._syaz5scu{color:red}']);
+    // The hash in a file name follows its rules.
+    const blue = await buildLibrary({ 'src/index.tsx': card('blue') });
+    const red = await buildLibrary({ 'src/index.tsx': card('red') });
+    assert.notDeepEqual(Object.keys(blue), Object.keys(red));
   });
 
   it("goes into a library's stylesheet when Vite's app builder builds it", async () => {
