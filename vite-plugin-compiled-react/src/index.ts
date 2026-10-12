@@ -278,8 +278,8 @@ async function parse(code: string, file: string) {
   return ast!;
 }
 
-// The local files a module's styles can read values from: the modules it imports, and the
-// modules those re-export.
+// The local files a module's styles can read values from: the modules it imports, and the modules
+// their values come from, transitively.
 async function valueSources(resolver: Resolver, file: string, ast: types.File) {
   const sources = new Set<string>();
   const follow = async (importer: string, requests: string[]) => {
@@ -292,7 +292,7 @@ async function valueSources(resolver: Resolver, file: string, ast: types.File) {
       }
       if (sources.has(source) || source.includes('/node_modules/')) continue;
       sources.add(source);
-      await follow(source, await reexports(source));
+      await follow(source, await valueImports(source));
     }
   };
   await follow(
@@ -305,24 +305,28 @@ async function valueSources(resolver: Resolver, file: string, ast: types.File) {
 }
 
 // Parsed once per change of the file.
-const reexportsCache = new Map<string, { mtimeMs: number; requests: string[] }>();
+const valueImportsCache = new Map<string, { mtimeMs: number; requests: string[] }>();
 
-async function reexports(file: string) {
+// The modules a file's exported values can come from: its re-exports, and all its imports unless
+// it's a component (.jsx, .tsx), which would make its importers depend on the whole tree below it.
+async function valueImports(file: string) {
   if (!/\.[cm]?[jt]sx?$/.test(file)) return [];
   const { mtimeMs } = await stat(file);
-  const cached = reexportsCache.get(file);
+  const cached = valueImportsCache.get(file);
   if (cached?.mtimeMs === mtimeMs) return cached.requests;
+  const isComponent = /\.[jt]sx$/.test(file);
   const requests = await parse(await readFile(file, 'utf8'), file).then(
     ast =>
       ast.program.body.flatMap(node =>
-        (node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') &&
-        node.source
-          ? [node.source.value]
+        (node.type === 'ImportDeclaration' && !isComponent) ||
+        node.type === 'ExportNamedDeclaration' ||
+        node.type === 'ExportAllDeclaration'
+          ? (node.source?.value ?? [])
           : [],
       ),
     () => [],
   );
-  reexportsCache.set(file, { mtimeMs, requests });
+  valueImportsCache.set(file, { mtimeMs, requests });
   return requests;
 }
 

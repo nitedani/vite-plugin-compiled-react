@@ -275,6 +275,42 @@ describe('dev', () => {
     );
   });
 
+  it('re-compiles a module when a file in the middle of a chain of imports changes', async () => {
+    const fixture = await serve({
+      'src/palette.ts': `export const palette = { red: 'red', blue: 'blue' };`,
+      'src/theme.ts': `import { palette } from './palette'; export const theme = { accent: palette.red };`,
+      'src/styles.ts': `import { theme } from './theme'; export const styles = { card: { color: theme.accent } };`,
+      'src/Card.jsx': `
+        import { styles } from './styles';
+        export const Card = () => <p css={styles.card} />;
+      `,
+    });
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
+    await edit(
+      fixture,
+      'src/theme.ts',
+      `import { palette } from './palette'; export const theme = { accent: palette.blue };`,
+    );
+    await eventually(
+      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
+      /color:blue/,
+    );
+  });
+
+  it("doesn't update a module for a change that only reaches it through a component it imports", async () => {
+    const fixture = await serve({
+      'src/clock.ts': `export const now = 1;`,
+      'src/Header.jsx': `import { now } from './clock'; export const Header = () => <h1>{now}</h1>; import.meta.hot.accept();`,
+      'src/Card.jsx': `import { Header } from './Header'; export const Card = () => <p css={{ color: 'red' }}><Header /></p>; import.meta.hot.accept();`,
+    });
+    for (const file of ['src/Card.jsx', 'src/Header.jsx', 'src/clock.ts']) await fixture.transform(file);
+    const sent = [];
+    fixture.server.environments.client.hot.send = payload => sent.push(payload);
+    await edit(fixture, 'src/clock.ts', `export const now = 2;`);
+    await eventually(async () => JSON.stringify(sent), /Header\.jsx/);
+    assert.doesNotMatch(JSON.stringify(sent), /Card\.jsx/);
+  });
+
   it('updates a .tsx module whose import TypeScript removed once Compiled inlined its value', async () => {
     const fixture = await serve({
       'src/colors.ts': `export const primary = 'red';`,
