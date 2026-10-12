@@ -13,5 +13,6 @@ pnpm --filter ./vite-plugin-compiled-react add -D --allow-build=esbuild "vite@$m
 pnpm --filter ./example add --allow-build=esbuild "vite@$major" "@vitejs/plugin-react@$([ "$major" -ge 8 ] && echo 6 || echo 5)"
 # Vike 0.4.257 and later depend on @universal-deploy/node, which needs Vite 7.1.
 if [ "$major" -lt 7 ]; then pnpm --filter ./example add vike@0.4.256; fi
+pnpm -r list vite
 pnpm test
 pnpm typecheck
