@@ -201,7 +201,7 @@ describe('the stylesheet', () => {
       'app (copy)',
     );
     // The files the stylesheet's URLs point to, from the root of the output.
-    const buildUrls = async base => {
+    const buildUrls = async (base, assetFileNames) => {
       const { output } = await build({
         root,
         base,
@@ -211,7 +211,7 @@ describe('the stylesheet', () => {
         build: {
           write: false,
           assetsInlineLimit: 0,
-          rollupOptions: { external: [/^react/, /^@compiled\/react/] },
+          rollupOptions: { external: [/^react/, /^@compiled\/react/], output: { assetFileNames } },
         },
       });
       const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
@@ -223,6 +223,11 @@ describe('the stylesheet', () => {
       assert.deepEqual(urls.sort(), [icon.fileName, 'logo.svg', 'my%20logo.svg']);
     };
     await buildUrls('/app/');
+    // Relative to the stylesheet, wherever Vite puts it.
+    await buildUrls('./');
+    await buildUrls('./', ({ names }) =>
+      names[0].endsWith('.css') ? 'css/[name]-[hash][extname]' : 'img/[name]-[hash][extname]',
+    );
 
     const { server, transform, script } = await serve(inApp(urls), dir => ({
       root: join(dir, 'app (copy)'),

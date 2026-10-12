@@ -320,6 +320,12 @@ import.meta.hot.accept();`;
         path.join(config.root, stylesheetName),
         config,
       );
+      // With a relative base, URLs are relative to the stylesheet, in the directory Vite would put
+      // a CSS file of that name in.
+      const base =
+        !config.base || config.base.startsWith('.')
+          ? `${path.posix.relative(assetDirectory(config, stylesheetName), '') || '.'}/`
+          : config.base;
       // Vite resolves the URLs of its modules' CSS only: a public file gets the base, and another
       // file is emitted.
       const source = await replaceUrls(code, async url => {
@@ -328,7 +334,7 @@ import.meta.hot.accept();`;
         if (!encoded) return;
         const file = decodeUrl(encoded);
         if (config.publicDir && isFile(path.join(config.publicDir, file))) {
-          return config.base + encoded.slice(1) + suffix;
+          return base + encoded.slice(1) + suffix;
         }
         const asset = [path.join(config.root, file), file].find(isFile);
         if (!asset) return;
@@ -337,7 +343,7 @@ import.meta.hot.accept();`;
           name: path.basename(asset),
           source: await readFile(asset),
         });
-        return config.base + this.getFileName(reference) + suffix;
+        return base + this.getFileName(reference) + suffix;
       });
       const fileName = this.getFileName(
         this.emitFile({ type: 'asset', name: stylesheetName, source }),
@@ -373,6 +379,25 @@ async function replaceUrls(
     const url = urls.shift();
     return url === undefined ? match : `url(${JSON.stringify(url)})`;
   });
+}
+
+// As Vite finds the directory of a CSS file it's about to emit.
+function assetDirectory({ build }: ResolvedConfig, name: string) {
+  const { output } = build.rollupOptions;
+  const { assetFileNames } = (Array.isArray(output) ? output[0] : output) ?? {};
+  if (!assetFileNames) return build.assetsDir;
+  return path.posix.dirname(
+    typeof assetFileNames === 'string'
+      ? assetFileNames
+      : // Rollup and Rolldown type a missing original file differently.
+        assetFileNames({
+          type: 'asset',
+          name,
+          names: [name],
+          originalFileNames: [],
+          source: '',
+        } as unknown as Parameters<typeof assetFileNames>[0]),
+  );
 }
 
 // As Vite reads a file's URL: a URL it can't decode names the file as it is.
