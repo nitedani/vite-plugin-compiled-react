@@ -3,7 +3,7 @@
         "dev": "vike dev",
         "build": "vike build",
         "preview": "vike build && vike preview",
-        "test": "node --test"
+        "test": "node --test --test-concurrency=1"
     },
     "dependencies": {
         "@compiled/react": "^2.0.0",
