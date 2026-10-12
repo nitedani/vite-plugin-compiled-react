@@ -1,4 +1,5 @@
 import babel, { type PluginItem, type PluginObj } from '@babel/core';
+import generator from '@babel/generator';
 // @ts-expect-error The package has no types.
 import transformJsxBabelPlugin from '@babel/plugin-transform-react-jsx';
 import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
@@ -7,6 +8,7 @@ import stripRuntimeBabelPlugin, {
 } from '@compiled/babel-plugin-strip-runtime';
 import { sort } from '@compiled/css';
 import { ATOMIC_VALUE_HASH_LENGTH, hash } from '@compiled/utils';
+import postcss from 'postcss';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
 import { statSync } from 'node:fs';
@@ -286,8 +288,8 @@ import.meta.hot.accept();`;
           this,
           (result.metadata as unknown as BabelFileMetadata).styleRules ?? [],
           file,
-          code,
           result.ast!,
+          async () => compiledKeyframes(code, file, await valueSources(resolver, file, imports)),
         );
         let { code: output, map } = renamed
           ? (await babel.transformFromAstAsync(result.ast!, code, generate))!
@@ -414,70 +416,118 @@ async function resolveUrls(
 // Compiled names a class, or keyframes, after the text of the CSS it names, so a URL that resolves
 // to a different file in another folder needs a name of its own. Each name Compiled generated for
 // a rule whose text changed gets the hash of its portable text instead, where Compiled wrote it
-// and nowhere else: in the module's rules, and in the string literals Compiled generated in its
-// code, which have no location in the source. Returns the rules, and whether the code changed.
+// and nowhere else: as the class of its rule, in the animations using its keyframes, and in the
+// string literals Compiled generated in the module's code, which have no location in the source.
+// Returns the rules, and whether the code changed.
 async function resolveRules(
   context: Parameters<typeof resolveUrls>[0],
   rules: string[],
   file: string,
-  source: string,
   ast: babel.types.File,
+  generatedKeyframes: () => Promise<Set<string>>,
 ) {
   const resolved = await Promise.all(rules.map(rule => resolveUrls(context, rule, file)));
   if (resolved.every(({ css }, index) => css === rules[index])) return { rules, renamed: false };
-  // Compiled names keyframes `k` and a hash of the keyframes() call, which isn't in the source.
+  // Compiled puts each keyframes() call in a rule of its own.
   const keyframes = new Map<string, string>();
-  resolved.forEach(({ css, portable }, index) => {
-    const name = css !== rules[index] && css.match(/^@keyframes (k[\da-z]+)\{/)?.[1];
-    if (name && !source.includes(name)) keyframes.set(name, `k${hash(portable)}`);
-  });
-  // A keyframes name is in its @keyframes rule, and in the declarations using it, after their
-  // rule's last `{`.
-  const withKeyframes = (rule: string) => {
-    const start = rule.startsWith('@keyframes ') ? 0 : rule.lastIndexOf('{');
-    return (
-      rule.slice(0, start) +
-      rule.slice(start).replace(/\bk[\da-z]+\b/g, name => keyframes.get(name) ?? name)
-    );
-  };
-  const literals: babel.types.StringLiteral[] = [];
-  babel.traverse(ast, {
-    StringLiteral({ node }) {
-      if (!node.loc) literals.push(node);
-    },
-  });
-  const generated = new Set(literals.flatMap(({ value }) => value.split(' ')));
+  let generated: Set<string> | undefined;
+  for (const [index, { css, portable }] of resolved.entries()) {
+    const name = css !== rules[index] && css.match(/^@keyframes ([^\s{]+)\{/)?.[1];
+    if (name && (generated ??= await generatedKeyframes()).has(name)) {
+      keyframes.set(name, `k${hash(portable)}`);
+    }
+  }
   const classNames = new Map<string, string>();
   const named = resolved.map(({ css, portable }, index) => {
-    const rule = withKeyframes(css);
-    return rule === rules[index] || rule.startsWith('@keyframes ')
-      ? rule
-      : renameClasses(rule, withKeyframes(portable), generated, classNames);
+    if (css === rules[index] && !keyframes.size) return css;
+    const [unresolved, sheet, hashed] = [rules[index], css, portable].map(text =>
+      postcss.parse(text),
+    );
+    for (const root of [sheet, hashed]) {
+      root.walkAtRules('keyframes', rule => {
+        rule.params = keyframes.get(rule.params) ?? rule.params;
+      });
+      root.walkDecls(/^(?:-\w+-)?animation(?:-name)?$/, decl => {
+        decl.value = decl.value.replace(/[\w-]+/g, name => keyframes.get(name) ?? name);
+      });
+    }
+    const [originals, hashedRules] = [unresolved, hashed].map(styleRules);
+    styleRules(sheet).forEach((rule, ruleIndex) => {
+      const original = originals[ruleIndex];
+      const name = rule.toString() !== original.toString() && ownClass(original);
+      if (!name) return;
+      // The rest of the name, which `ax` groups classes by, stays.
+      const renamed =
+        name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) +
+        hash(hashedRules[ruleIndex].nodes.join(';')).slice(0, ATOMIC_VALUE_HASH_LENGTH);
+      classNames.set(name, renamed);
+      rule.selector = rule.selector.replace(classRE(name), `.${renamed}`);
+    });
+    return sheet.toString();
   });
-  for (const literal of literals) {
-    literal.value = literal.value.replace(/\S+/g, name => classNames.get(name) ?? name);
-  }
+  babel.traverse(ast, {
+    StringLiteral({ node }) {
+      if (!node.loc) node.value = node.value.replace(/\S+/g, name => classNames.get(name) ?? name);
+    },
+  });
   return { rules: named, renamed: classNames.size > 0 };
 }
 
-// Names the classes Compiled generated in a rule as Compiled does, after their declaration's
-// value. The rest of each name, which `ax` groups classes by, stays.
-function renameClasses(
-  rule: string,
-  portable: string,
-  generated: Set<string>,
-  classNames: Map<string, string>,
-) {
-  const value = portable.slice(portable.indexOf(':', portable.lastIndexOf('{')) + 1);
-  const valueHash = hash(value.replace(/\}+$/, '')).slice(0, ATOMIC_VALUE_HASH_LENGTH);
-  const block = rule.lastIndexOf('{');
-  const selectors = rule.slice(0, block).replace(/\.(_[\w-]+)/g, (match, name: string) => {
-    if (!generated.has(name)) return match;
-    const renamed = name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) + valueHash;
-    classNames.set(name, renamed);
-    return `.${renamed}`;
+// The rules of a stylesheet outside its @keyframes, which Compiled names with a class.
+function styleRules(root: postcss.Root) {
+  const rules: postcss.Rule[] = [];
+  root.walkRules(rule => {
+    const { parent } = rule;
+    if (!(parent?.type === 'atrule' && /keyframes$/.test((parent as postcss.AtRule).name))) {
+      rules.push(rule);
+    }
   });
-  return selectors + rule.slice(block);
+  return rules;
+}
+
+const classRE = (name: string) => new RegExp(`\\.${name}(?![\\w-])`, 'g');
+
+// The class Compiled named a rule with, which is `_`, the hash of the rule's at-rules, its
+// selector with `&` for the class and its property, and the hash of its value. Any other class in
+// the selector is the user's, even one with a name Compiled generated for another rule.
+function ownClass(rule: postcss.Rule) {
+  let atRules: string | undefined;
+  for (let node = rule.parent; node?.type === 'atrule'; node = node.parent) {
+    atRules = `${(node as postcss.AtRule).name}${(node as postcss.AtRule).params}${atRules ?? ''}`;
+  }
+  return rule.selector.match(/(?<=\.)_[\w-]+/g)?.find(name => {
+    const group = name.slice(1, -ATOMIC_VALUE_HASH_LENGTH);
+    const selector = rule.selector.replace(classRE(name), '&');
+    // Compiled writes no at-rules as `undefined`.
+    return rule.nodes.some(
+      node => node.type === 'decl' && hash(`${atRules}${selector}${node.prop}`).startsWith(group),
+    );
+  });
+}
+
+// The names Compiled gives the keyframes() calls of a module and of the modules its values come
+// from: `k` and the hash of the call's code.
+async function compiledKeyframes(code: string, file: string, sources: Iterable<string>) {
+  const names = new Set<string>();
+  const modules = await Promise.all(
+    [...sources]
+      .filter(source => /\.[cm]?[jt]sx?$/.test(source))
+      .map(async source => [source, await readFile(source, 'utf8')] as const),
+  );
+  for (const [module, text] of [[file, code] as const, ...modules]) {
+    const ast = await parse(text, module).catch(() => undefined);
+    if (!ast) continue;
+    const add = (callee: babel.NodePath, call: babel.types.Expression) => {
+      if (callee.referencesImport('@compiled/react', 'keyframes')) {
+        names.add(`k${hash(generator.default(call).code)}`);
+      }
+    };
+    babel.traverse(ast, {
+      CallExpression: call => add(call.get('callee'), call.node),
+      TaggedTemplateExpression: call => add(call.get('tag'), call.node),
+    });
+  }
+  return names;
 }
 
 // The URLs of a stylesheet's url()s.

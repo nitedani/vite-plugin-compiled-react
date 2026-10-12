@@ -202,6 +202,9 @@ importers:
       '@babel/core':
         specifier: ^7.29.7
         version: 7.29.7
+      '@babel/generator':
+        specifier: ^7.29.8
+        version: 7.29.8
       '@babel/plugin-transform-react-jsx':
         specifier: ^7.29.7
         version: 7.29.7(@babel/core@7.29.7)
@@ -220,6 +223,9 @@ importers:
       enhanced-resolve:
         specifier: ^5.26.0
         version: 5.26.0
+      postcss:
+        specifier: ^8.5.28
+        version: 8.5.28
     devDependencies:
       '@compiled/react':
         specifier: ^2.0.0
@@ -227,6 +233,9 @@ importers:
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
+      '@types/babel__generator':
+        specifier: ^7.27.0
+        version: 7.27.0
       '@types/node':
         specifier: ^26.6.3
         version: 26.6.3

@@ -249,14 +249,20 @@ export const Logo = () => <p css={{
   });
 
   it('gives the same relative URL its own class and keyframes in each folder it resolves in', async () => {
-    // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image.
+    // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image, and `k1gurkcx`
+    // the name it gives `fade` (`k1fhct6v` in `c`).
     const icon = `import { keyframes } from '@compiled/react';
+import { name, label } from '/tokens.js';
+import { slide } from '/slide.js';
 const fade = keyframes({ to: { backgroundImage: 'url(./icon.svg)' } });
-export const Icon = () => <i data-label="_1itk1mit" css={{
+export const Icon = () => <i data-label="_1itk1mit" title="k1gurkcx" css={{
   backgroundImage: 'url(./icon.svg)',
   animationName: fade,
+  animation: \`\${slide} 1s\`,
   listStyleImage: 'image-set(url(./icon.svg) 1x, "/logo.svg" 2x)',
-  '& ._legacy': { maskImage: 'url(./icon.svg)' },
+  '& ._1itk1mit': { maskImage: 'url(./icon.svg)' },
+  ['@keyframes ' + name]: { to: { backgroundImage: 'url(./icon.svg)' } },
+  '::before': { content: label },
 }} />;`;
     // The root is `app`, and `c` takes its image from a folder beside it.
     const files = {
@@ -267,6 +273,10 @@ export const Icon = () => <i data-label="_1itk1mit" css={{
       'app/b/Icon.jsx': icon,
       'app/b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
       'app/c/Icon.jsx': icon.replaceAll('./', '@shared/'),
+      'app/c/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="d"/>',
+      'app/tokens.js': `export const name = 'kcustom';\nexport const label = '"k1fhct6v"';`,
+      'app/slide.js': `import { keyframes } from '@compiled/react';
+export const slide = keyframes({ to: { borderImageSource: 'url(./icon.svg)' } });`,
       'app/public/logo.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
       'shared/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="c"/>',
     };
@@ -309,9 +319,14 @@ export const Icon = () => <i data-label="_1itk1mit" css={{
       built.map(([, ...images]) => images),
       [['a', 'a'], ['b', 'b'], ['c', 'c']],
     );
-    // Only the names Compiled generated change: a string and a class of the user's stay.
+    // Only the names Compiled generated change, where it wrote them: the user's string, class,
+    // keyframes and content stay, even when they equal a generated name.
     for (const chunk of chunks) assert.match(chunk, /"data-label":\s?["`]_1itk1mit["`]/);
-    assert.match(css, / \._legacy\{/);
+    assert.equal(css.match(/ \._1itk1mit\{/g)?.length, 3, css);
+    assert.match(css, /@keyframes kcustom\{/);
+    assert.deepEqual(new Set(css.match(/content:"\w+"/g)), new Set(['content:"k1fhct6v"']));
+    // Keyframes from another module resolve their URLs in each module using them.
+    assert.equal(new Set(css.match(/(?<=@keyframes )\w+(?=\{to\{border-image-source)/g)).size, 3, css);
 
     // In another checkout, deeper, with Vite inlining the small files.
     const { transform, sheet } = await serve(
