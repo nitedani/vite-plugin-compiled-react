@@ -11,5 +11,7 @@ cd "$dir"
 pnpm --filter ./vite-plugin-compiled-react add -D --allow-build=esbuild "vite@$major"
 # Vite 6 and 7 install esbuild, and @vitejs/plugin-react 6 needs Vite 8.
 pnpm --filter ./example add --allow-build=esbuild "vite@$major" "@vitejs/plugin-react@$([ "$major" -ge 8 ] && echo 6 || echo 5)"
+# Vike 0.4.257 and later depend on @universal-deploy/node, which needs Vite 7.1.
+if [ "$major" -lt 7 ]; then pnpm --filter ./example add vike@0.4.256; fi
 pnpm test
 pnpm typecheck
