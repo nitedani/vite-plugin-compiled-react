@@ -253,15 +253,14 @@ import.meta.hot.accept();`;
         });
         if (!result?.code) return;
         const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
-        // Compiled doesn't report the files it reads a member expression from, and TypeScript
-        // drops the imports whose values Compiled inlined, which Vite's module graph then misses.
-        // A module without rules has no values to update, and its imports would make it update
-        // with them, reloading the page when it isn't a Fast Refresh boundary. Without extraction,
-        // the rules stay in the output, where strip-runtime finds them all the same.
-        const compiledRules = result.ast ? await findRules(result.ast, file) : styleRules;
-        if (server && compiledRules.length) {
-          for (const source of await valueSources(resolver, file, imports)) {
-            addDependent(source, id);
+        // In dev, a module with rules depends on the files its styles can read values from:
+        // Compiled reports some, and TypeScript drops the imports of the values it inlined.
+        if (server) {
+          const compiledRules = extractStyles ? styleRules : await findRules(result.ast!, file);
+          if (compiledRules.length) {
+            for (const source of await valueSources(resolver, file, imports)) {
+              addDependent(source, id);
+            }
           }
         }
         addRules(styleRules);
