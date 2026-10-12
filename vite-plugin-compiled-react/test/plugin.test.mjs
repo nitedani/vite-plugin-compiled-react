@@ -238,9 +238,13 @@ describe('the stylesheet', () => {
       ),
       { 'ui.css': '._syaz5scu{color:red}' },
     );
+    // Vite bundles the .compiled.css files of the packages a library bundles, as their own CSS.
     assert.deepEqual(
-      await buildLibrary({ 'src/index.jsx': card }, { fileName: 'ui', cssFileName: 'styles' }),
-      { 'styles.css': '._syaz5scu{color:red}' },
+      await buildLibrary(
+        { ...packageWithRules, 'src/index.jsx': `import 'ext-lib';\n${card}` },
+        { fileName: 'ui', cssFileName: 'styles' },
+      ),
+      { 'styles.css': '._30l3bf54:hover{color:green}._syaz5scu{color:red}' },
     );
     // With its CSS split, each entry's stylesheet has the rules of the entry's modules.
     assert.deepEqual(
