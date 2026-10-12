@@ -58,6 +58,9 @@ declare module 'react' {
 const stylesheetName = 'vite-plugin-compiled-react.css';
 const stylesheetId = `virtual:${stylesheetName}`;
 const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
+// Browsers request a virtual module under /@id/, with \0 encoded.
+const browserUrl = (id: string) => `/@id/__x00__${id}`;
+const stylesheetUrl = browserUrl(stylesheetId);
 // In dev, browsers get the stylesheet from a script that keeps the newest of its versions.
 const browserStylesheetId = 'virtual:vite-plugin-compiled-react.js';
 const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
@@ -128,10 +131,17 @@ export const useCache = () => {
         const version = rules.size;
         const code = await processStylesheet(this.environment.config);
         // A page can run an older version after a newer one: the version with more rules wins.
+        // A page can also link the stylesheet more than once, for example from server-rendered HTML
+        // and from a React Server Components payload, and Vite's hot update replaces one link only:
+        // the newest version goes after every link, so their older rules don't override it.
         return `import { updateStyle } from '/@vite/client';
 if (!(import.meta.hot.data.rules >= ${version})) {
   import.meta.hot.data.rules = ${version};
   updateStyle(${JSON.stringify('\0' + stylesheetId)}, ${JSON.stringify(code)});
+  const sheets = [...document.querySelectorAll('link[rel="stylesheet"], style')];
+  const style = sheets.find(sheet => sheet.dataset.viteDevId === ${JSON.stringify('\0' + stylesheetId)});
+  const link = sheets.findLast(sheet => sheet.href && new URL(sheet.href).pathname.endsWith(${JSON.stringify(stylesheetUrl)}));
+  if (style && sheets.indexOf(link) > sheets.indexOf(style)) link.after(style);
 }
 import.meta.hot.accept();`;
       },
@@ -383,15 +393,15 @@ function refreshStylesheet(server: ViteDevServer) {
     const { moduleGraph } = environment;
     const updates: Update[] = [];
     for (const id of [stylesheetId, browserStylesheetId]) {
+      // Vite's client finds the <link>s and the modules to update by their URL.
+      const path = browserUrl(id);
       for (const mod of moduleGraph.getModulesByFile('\0' + id) ?? []) {
         moduleGraph.invalidateModule(mod);
         mod.lastHMRTimestamp = timestamp;
         if (mod.type === 'css') {
-          // Vite's client finds the <link>s to replace by their URL.
-          const path = `/@id/__x00__${id}`;
           updates.push({ type: 'css-update', path, acceptedPath: path, timestamp });
         } else if (mod.isSelfAccepting) {
-          updates.push({ type: 'js-update', path: mod.url, acceptedPath: mod.url, timestamp });
+          updates.push({ type: 'js-update', path, acceptedPath: path, timestamp });
         }
       }
     }

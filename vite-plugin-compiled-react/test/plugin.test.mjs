@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { Window } from 'happy-dom';
 import { build, createRunnableDevEnvironment, createServer } from 'vite';
 import { compiled } from '../lib/index.js';
 
@@ -186,19 +187,38 @@ describe('the stylesheet', () => {
   });
 
   it('keeps the newest rules in dev when a page runs an older version after a newer one', async () => {
-    const { server, transform } = await serve({
+    const { transform, script } = await serve({
       'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
       'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
     });
-    const load = async file =>
-      (await server.environments.client.transformRequest(stylesheetImport(await transform(file)))).code;
-    const older = await load('src/Banner.jsx');
-    const newer = await load('src/Card.jsx');
-    const applied = [];
-    globalThis.applyStyle = (id, css) => applied.push(css);
-    await runInBrowser(newer);
-    await runInBrowser(older);
-    assert.deepEqual(applied, ['._syaz5scu{color:red}._syazbf54{color:green}']);
+    const older = await script(await transform('src/Banner.jsx'));
+    const newer = await script(await transform('src/Card.jsx'));
+    const page = browserPage();
+    await page.run(newer);
+    await page.run(older);
+    assert.equal(
+      page.document.querySelector('style').textContent,
+      '._syaz5scu{color:red}._syazbf54{color:green}',
+    );
+  });
+
+  it('goes after every link to it in dev, since Vite updates one of them', async () => {
+    const { transform, script } = await serve({
+      'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
+      'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+    });
+    const older = await script(await transform('src/Banner.jsx'));
+    const newer = await script(await transform('src/Card.jsx'));
+    const href = '/@id/__x00__virtual:vite-plugin-compiled-react.css';
+    const page = browserPage(`<link rel="stylesheet" href="${href}?direct">`);
+    await page.run(older);
+    // A React Server Components payload links it again.
+    page.document.head.insertAdjacentHTML('beforeend', `<link rel="stylesheet" href="${href}">`);
+    await page.run(newer);
+    assert.deepEqual(
+      [...page.document.head.children].map(sheet => sheet.getAttribute('href') ?? sheet.textContent),
+      [`${href}?direct`, href, '._syaz5scu{color:red}._syazbf54{color:green}'],
+    );
   });
 
   it('is sent to pages that loaded it in dev when rules are added, also by a server environment', async () => {
@@ -213,7 +233,7 @@ describe('the stylesheet', () => {
     await ssr.transformRequest('/src/Card.jsx');
     assert.deepEqual(
       sent.flatMap(({ updates }) => updates.map(({ type, path }) => [type, path])),
-      [['js-update', '\0virtual:vite-plugin-compiled-react.js']],
+      [['js-update', '/@id/__x00__virtual:vite-plugin-compiled-react.js']],
     );
   });
 });
@@ -360,15 +380,33 @@ async function fixture(files) {
   return root;
 }
 
-// Runs a module served to the browser, with Vite's client stubbed.
-async function runInBrowser(code) {
+// A page that runs modules served to the browser, with Vite's client stubbed.
+let pages = 0;
+function browserPage(head = '') {
+  const page = ++pages;
+  const { document } = new Window({
+    url: 'http://localhost/',
+    settings: { disableCSSFileLoading: true },
+  });
+  document.head.innerHTML = head;
+  const hotData = {};
   const viteClient = `data:text/javascript,
-    const data = {};
-    export const createHotContext = () => ({ data, accept() {} });
-    export const updateStyle = (...args) => globalThis.applyStyle(...args);`;
-  await import(
-    `data:text/javascript,${encodeURIComponent(code.replace(/(["'])\/@vite\/client\1/g, JSON.stringify(viteClient)))}`
-  );
+    export const createHotContext = () => ({ data: hotData, accept() {} });
+    export const updateStyle = (id, css) => {
+      const style = [...document.querySelectorAll('style')].find(style => style.dataset.viteDevId === id) ??
+        document.head.appendChild(document.createElement('style'));
+      style.dataset.viteDevId = id;
+      style.textContent = css;
+    };`;
+  return {
+    document,
+    async run(code) {
+      Object.assign(globalThis, { document, hotData });
+      // Each page runs the module anew: import() caches by URL.
+      code = `${code.replace(/(["'])\/@vite\/client\1/g, JSON.stringify(viteClient))}\n// page ${page}`;
+      await import(`data:text/javascript,${encodeURIComponent(code)}`);
+    },
+  };
 }
 
 // The id of the stylesheet a module imports, with its query.
@@ -402,5 +440,7 @@ async function serve(files, config = {}) {
       assert.ok(stylesheetImport(code));
       return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
     },
+    // The script that carries the stylesheet to the browser, in the version a module imports.
+    script: async code => (await client.transformRequest(stylesheetImport(code))).code,
   };
 }
