@@ -51,7 +51,7 @@ compiled({
 });
 ```
 
-- `extract` (default `true`): extract the styles into one stylesheet for the whole app, sorted in Compiled's order, which atomic CSS needs to cascade right. It goes through your PostCSS config, and every page links it, including in the server-rendered HTML. A library build (`build.lib`) puts the rules in the library's own stylesheet, for example `dist/my-lib.css`. With `false`, Compiled's runtime inserts `<style>` elements while rendering instead. Pass `{ build: true, serve: false }` to decide per command, for example when your framework doesn't link CSS in development. Server components always extract, since Compiled's runtime can't run in them.
+- `extract` (default `true`): extract the styles into one stylesheet for the whole app, sorted in Compiled's order, which atomic CSS needs to cascade right. It goes through your PostCSS config, and every page links it, including in the server-rendered HTML. A library build (`build.lib`) puts the rules in the library's own stylesheet, for example `dist/my-lib.css`. With `build.cssCodeSplit: true`, each stylesheet Vite splits out, for example `dist/index.css`, gets the rules of its own modules. With `extract: false`, Compiled's runtime inserts `<style>` elements while rendering instead. Pass `{ build: true, serve: false }` to decide per command, for example when your framework doesn't link CSS in development. Server components always extract, since Compiled's runtime can't run in them.
 - `addComponentName` (default `false`): add the component name as a class name to `styled` components outside production.
 - `optimizeCss` (default `true`): minify the generated CSS rules.
 
@@ -59,6 +59,7 @@ compiled({
 
 - Requires Vite 6.3 or later and `@compiled/react` 2. `@vitejs/plugin-react` is no longer a peer dependency: the plugin compiles in its own transform.
 - `extract` defaults to `true`. Pass `extract: false` to keep the runtime.
+- `compiled()` returns `Plugin[]`, which `plugins` accepts as before. Code that types its result as `Plugin` fails with TS2741: type it as `Plugin[]`.
 - Extracted styles go into one stylesheet linked on every page, not a stylesheet per module.
 - The `cache` and `onIncludedFiles` options are removed.
 - The plugin no longer adds `@compiled/react` to `ssr.noExternal`.
