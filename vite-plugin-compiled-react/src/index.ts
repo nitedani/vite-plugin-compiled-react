@@ -443,8 +443,9 @@ async function resolveRules(
     }
   }
   const classNames = new Map<string, string>();
-  const owners: { name: string; original: postcss.Rule }[] = [];
-  const copies: { rule: postcss.Rule; original: postcss.Rule }[] = [];
+  // The selectors of the rules with a class of their own, by that class as Compiled named it.
+  const owners = new Map<string, string>();
+  const copies: { rule: postcss.Rule; selector: string }[] = [];
   const named = resolved.map(({ css, portable }, index) => {
     if (css === rules[index] && !keyframes.size) return css;
     const [unresolved, sheet, hashed] = [rules[index], css, portable].map(text =>
@@ -464,8 +465,8 @@ async function resolveRules(
       if (rule.toString() === original.toString()) return;
       const name = ownClass(original);
       // Autoprefixer's copy of a rule with a prefixed pseudo-class or pseudo-element.
-      if (!name) return copies.push({ rule, original });
-      owners.push({ name, original });
+      if (!name) return copies.push({ rule, selector: original.selector });
+      owners.set(name, original.selector);
       // The rest of the name, which `ax` groups classes by, stays.
       const renamed =
         name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) +
@@ -475,21 +476,17 @@ async function resolveRules(
     });
     return sheet;
   });
-  // A copy keeps the class of the rule it was copied from, which has its declarations and its
-  // selector but for the prefixed pseudo-classes and pseudo-elements, so it gets that rule's name.
-  for (const { rule, original } of copies) {
-    const selector = new RegExp(
-      `^${original.selector.split(vendorPseudoRE).map(escapeRegExp).join('::?[\\w-]+')}$`,
+  // Autoprefixer copies a rule once Compiled has named it, so the copy has the rule's class: the one
+  // in its selector whose rule has the copy's selector but for the prefixed pseudos. Its
+  // declarations can differ, as autoprefixer leaves out the ones other browsers need.
+  for (const { rule, selector } of copies) {
+    const unprefixed = new RegExp(
+      `^${selector.split(vendorPseudoRE).map(escapeRegExp).join('::?[\\w-]+')}$`,
     );
-    const from = owners.find(
-      owner =>
-        selector.test(owner.original.selector) &&
-        owner.original.nodes.join(';') === original.nodes.join(';') &&
-        classRE(owner.name).test(original.selector),
-    );
-    if (from) {
-      rule.selector = rule.selector.replace(classRE(from.name), `.${classNames.get(from.name)}`);
-    }
+    const name = selector
+      .match(/(?<=\.)_[\w-]+/g)
+      ?.find(name => owners.has(name) && unprefixed.test(owners.get(name)!));
+    if (name) rule.selector = rule.selector.replace(classRE(name), `.${classNames.get(name)}`);
   }
   babel.traverse(ast, {
     StringLiteral({ node }) {

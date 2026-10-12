@@ -5,6 +5,7 @@ import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { Window } from 'happy-dom';
+import postcss from 'postcss';
 import { build, createBuilder, createRunnableDevEnvironment, createServer } from 'vite';
 import { compiled } from '../lib/index.js';
 
@@ -257,22 +258,72 @@ export const Logo = () => <p css={{
   });
 
   it("gives autoprefixer's copies of a rule the classes its rule has", async () => {
-    // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image, and the user's
-    // class in the other rule's selector.
-    const { transform, stylesheet } = await serve({
-      'src/icon.svg': svg,
-      'src/Input.jsx': `export const Input = () => <p css={{
-  backgroundImage: 'url(./icon.svg)',
-  '& ._1itk1mit::placeholder': { backgroundImage: 'url(./icon.svg)' },
-}}><input className="_1itk1mit" /></p>;`,
-    });
-    const code = await transform('src/Input.jsx');
-    const css = await stylesheet(code);
-    const selectors = css.match(/[^{}]+(?=::(?:-moz-)?placeholder\{)/g);
-    assert.equal(selectors?.length, 2, css);
-    for (const selector of selectors) {
-      const [, name] = selector.match(/^\.(_\w+) \._1itk1mit$/) ?? assert.fail(css);
-      assert.ok(code.includes(name), css);
+    const image = `'url(./icon.svg)'`;
+    // The browsers that get -webkit- and -ms- copies, and an -webkit-animation the copies leave out.
+    const older = 'ie 10, firefox 20, safari 6, chrome 20, edge 15';
+    // [case, the module's elements, browserslist, the prefixes of its copies]
+    const cases = [
+      ['a copy', `<input css={{ '::placeholder': { backgroundImage: ${image} } }} />`, undefined, ['-moz-']],
+      [
+        // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image.
+        "a user's class equal to a class generated in the module",
+        `<p css={{ backgroundImage: ${image}, '& ._1itk1mit::placeholder': { backgroundImage: ${image} } }}>
+          <input className="_1itk1mit" />
+        </p>`,
+        undefined,
+        ['-moz-'],
+      ],
+      [
+        "copies without their rule's -webkit-mask-image",
+        `<input readOnly css={{
+          '::placeholder': { maskImage: ${image} },
+          '::selection': { maskImage: ${image} },
+          ':read-only': { maskImage: ${image} },
+        }} />`,
+        undefined,
+        ['-moz-'],
+      ],
+      [
+        '-webkit-, -moz- and -ms- copies',
+        `<input css={{ '::placeholder': { backgroundImage: ${image} }, ':fullscreen': { backgroundImage: ${image} } }} />`,
+        older,
+        ['-webkit-', '-moz-', '-ms-'],
+      ],
+      [
+        "copies without their rule's -webkit-animation",
+        `<input css={{ '::placeholder': { animation: \`\${fade} 1s\` } }} />`,
+        older,
+        ['-moz-', '-ms-'],
+      ],
+    ];
+    for (const [name, elements, browserslist, prefixes] of cases) {
+      const { transform, stylesheet } = await serve({
+        'src/icon.svg': svg,
+        'src/A.jsx': `import { keyframes } from '@compiled/react';
+const fade = keyframes({ to: { backgroundImage: ${image} } });
+export const A = () => <>${elements}</>;`,
+      });
+      process.env.BROWSERSLIST = browserslist;
+      if (!browserslist) delete process.env.BROWSERSLIST;
+      const code = await transform('src/A.jsx').finally(() => delete process.env.BROWSERSLIST);
+      const css = await stylesheet(code);
+      const rules = [];
+      postcss.parse(css).walkRules(/\._/, rule => {
+        const atRules = rule.parent.type === 'atrule' ? `@${rule.parent.name} ${rule.parent.params}` : '';
+        rules.push({ atRules, selector: rule.selector });
+      });
+      const vendorPseudo = /::?-(?:webkit|moz|ms|o)-/;
+      const unprefixed = ({ atRules, selector }) =>
+        `${atRules} ${selector.replace(/::?[\w-]+(?:\([^)]*\))?/g, '')}`;
+      const copies = rules.filter(({ selector }) => vendorPseudo.test(selector));
+      const message = `${name}: ${css}`;
+      for (const prefix of prefixes) assert.ok(copies.some(({ selector }) => selector.includes(prefix)), message);
+      // Each copy names the classes its rule names, which are on the elements.
+      for (const copy of copies) {
+        const rule = rules.find(rule => !copies.includes(rule) && unprefixed(rule) === unprefixed(copy));
+        assert.ok(rule, `${name}: ${copy.selector} has no rule in ${css}`);
+      }
+      for (const [, className] of css.matchAll(/\.(_[\w-]+)/g)) assert.ok(code.includes(className), message);
     }
   });
 
