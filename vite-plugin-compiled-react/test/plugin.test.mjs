@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { Window } from 'happy-dom';
 import { build, createBuilder, createRunnableDevEnvironment, createServer } from 'vite';
 import { compiled } from '../lib/index.js';
@@ -159,11 +160,21 @@ describe('the stylesheet', () => {
           ...buildOptions,
           write: false,
           lib: { entry: 'src/index.jsx', formats: ['es'], ...lib },
-          rollupOptions: { external: [/^react/, /^@compiled\/react/] },
+          rollupOptions: {
+            external: [/^react/, /^@compiled\/react/],
+            // The global variable an `iife` or `umd` library reads each of them from.
+            output: { globals: () => 'external' },
+          },
         },
       });
-      return output.flatMap(({ fileName, source }) =>
-        fileName.endsWith('.css') ? [[fileName, source.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [],
+      // Each stylesheet, and the CSS each `iife` or `umd` chunk inserts.
+      return Object.fromEntries(
+        output.flatMap(({ fileName, source, code }) => {
+          const css = fileName.endsWith('.css')
+            ? source
+            : /\.(iife|umd)\.c?js$/.test(fileName) && insertedStyles(code);
+          return css ? [[fileName, css.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [];
+        }),
       );
     };
     const card = `export const Card = () => <p css={{ color: 'red' }} />;`;
@@ -172,18 +183,18 @@ describe('the stylesheet', () => {
         { 'src/index.jsx': `import './own.css';\n${card}`, 'src/own.css': `.own { color: blue }` },
         { fileName: 'my-lib' },
       ),
-      [['my-lib.css', '.own{color:#00f}._syaz5scu{color:red}']],
+      { 'my-lib.css': '.own{color:#00f}._syaz5scu{color:red}' },
     );
     assert.deepEqual(
       await buildLibrary(
         { 'package.json': `{ "name": "@acme/ui" }`, 'src/index.jsx': card },
         {},
       ),
-      [['ui.css', '._syaz5scu{color:red}']],
+      { 'ui.css': '._syaz5scu{color:red}' },
     );
     assert.deepEqual(
       await buildLibrary({ 'src/index.jsx': card }, { fileName: 'ui', cssFileName: 'styles' }),
-      [['styles.css', '._syaz5scu{color:red}']],
+      { 'styles.css': '._syaz5scu{color:red}' },
     );
     // With its CSS split, each entry's stylesheet has the rules of the entry's modules, sorted.
     assert.deepEqual(
@@ -197,11 +208,30 @@ describe('the stylesheet', () => {
         { entry: { index: 'src/index.jsx', banner: 'src/banner.jsx' } },
         { cssCodeSplit: true },
       ),
-      [
-        ['index.css', '.own{color:#00f}._syaz5scu{color:red}'],
-        ['banner.css', '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
-      ],
+      {
+        'index.css': '.own{color:#00f}._syaz5scu{color:red}',
+        'banner.css': '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+      },
     );
+    // Vite puts the split CSS of an `iife` or `umd` library into its chunk.
+    for (const [format, file] of [['iife', 'my-lib.iife.js'], ['umd', 'my-lib.umd.cjs']]) {
+      assert.deepEqual(
+        await buildLibrary(
+          {
+            'src/index.jsx': `export { Wide } from './Wide';\nimport './own.css';\n${card}`,
+            'src/own.css': `.own { color: blue }`,
+            // A minifier can put the CSS in a template literal.
+            'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green', '&::after': { content: '"\${x}"' }, '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+          },
+          { formats: [format], name: 'Lib', fileName: 'my-lib' },
+          { cssCodeSplit: true },
+        ),
+        {
+          [file]:
+            '.own{color:#00f}._aetrhhqh:after{content:"${x}"}._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+        },
+      );
+    }
   });
 
   it("goes into a library's stylesheet when Vite's app builder builds it", async () => {
@@ -224,9 +254,9 @@ describe('the stylesheet', () => {
       }),
     });
     const [{ output }] = await builder.build(builder.environments.client);
-    assert.equal(
+    assert.match(
       output.find(({ fileName }) => fileName === 'my-lib.css')?.source,
-      '._syaz5scu{color:red}',
+      /^\._syaz5scu\{color:red\}/,
     );
   });
 
@@ -422,6 +452,13 @@ async function fixture(files) {
     await writeFile(join(root, file), content);
   }
   return root;
+}
+
+// The CSS a script inserts into a page.
+function insertedStyles(code) {
+  const { document } = new Window();
+  runInNewContext(code, { document, external: {} });
+  return [...document.querySelectorAll('style')].map(style => style.textContent).join('');
 }
 
 // A page that runs modules served to the browser, with Vite's client stubbed.

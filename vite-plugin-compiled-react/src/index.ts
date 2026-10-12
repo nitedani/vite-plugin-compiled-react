@@ -14,10 +14,8 @@ import {
   normalizePath,
   preprocessCSS,
   type Environment,
-  type LibraryOptions,
   type Plugin,
   type ResolvedConfig,
-  type Rollup,
   type Update,
   type ViteDevServer,
 } from 'vite';
@@ -64,6 +62,11 @@ const stylesheetUrl = browserUrl(stylesheetId);
 // In dev, browsers get the stylesheet from a script that keeps the newest of its versions.
 const browserStylesheetId = 'virtual:vite-plugin-compiled-react.js';
 const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
+// In a library, a module's stylesheet is a placeholder rule until the library plugin fills it in.
+const moduleStylesheetIdRE = /\.css\?vite-plugin-compiled-react=(\d+)$/;
+const moduleStylesheet = (index: string) =>
+  `.vite-plugin-compiled-react-${index}{--vite-plugin-compiled-react:${index}}`;
+const moduleStylesheetRE = /\.vite-plugin-compiled-react-(\d+)\s*\{[^}]*\}/g;
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -75,8 +78,9 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
   // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
   // all extracted rules go into one stylesheet.
   const rules = new Set<string>();
-  // A library that splits its CSS gets a stylesheet per chunk, with the rules of the chunk's modules.
-  const moduleRules = new Map<string, string[]>();
+  // In a library, each module with rules imports a stylesheet of its own, so its rules go wherever
+  // Vite puts the CSS of its chunk, sorted with the other rules there.
+  const libraryModuleRules: string[][] = [];
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
@@ -113,15 +117,16 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
       server = devServer;
     },
     resolveId: {
-      filter: { id: /^virtual:vite-plugin-compiled-react\.css$/ },
+      filter: { id: [/^virtual:vite-plugin-compiled-react\.css$/, moduleStylesheetIdRE] },
       handler(id) {
+        if (moduleStylesheetIdRE.test(id)) return id;
         return server && this.environment.config.consumer === 'client'
           ? '\0' + browserStylesheetId
           : '\0' + id;
       },
     },
     load: {
-      filter: { id: [stylesheetRE, browserStylesheetRE, styleCacheRE] },
+      filter: { id: [stylesheetRE, browserStylesheetRE, moduleStylesheetIdRE, styleCacheRE] },
       async handler(id) {
         if (styleCacheRE.test(id)) {
           return isReactServer(this.environment)
@@ -132,6 +137,8 @@ export const useCache = () => {
             : undefined;
         }
         if (stylesheetRE.test(id)) return stylesheet();
+        const moduleIndex = id.match(moduleStylesheetIdRE)?.[1];
+        if (moduleIndex) return moduleStylesheet(moduleIndex);
         const version = rules.size;
         const code = await processStylesheet(this.environment.config);
         // A page can run an older version after a newer one: the version with more rules wins.
@@ -207,9 +214,16 @@ import.meta.hot.accept();`;
         const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
         const ruleCount = rules.size;
         for (const rule of styleRules) rules.add(rule);
-        moduleRules.set(id, styleRules);
         if (server && rules.size > ruleCount) refreshStylesheet(server);
-        return { code: result.code, map: result.map };
+        let output = result.code;
+        if (styleRules.length && this.environment.config.build.lib && !server) {
+          const index = libraryModuleRules.push(styleRules) - 1;
+          // Named after the module, which names its file when Vite preserves the modules. Imported
+          // last, so the rules follow the CSS of the module's imports.
+          const sheet = `${file.replace(/\.[^./]+$/, '')}.css?vite-plugin-compiled-react=${index}`;
+          output += `\nimport ${JSON.stringify(sheet)};`;
+        }
+        return { code: output, map: result.map };
       },
     },
     async generateBundle(_, bundle) {
@@ -245,61 +259,51 @@ import.meta.hot.accept();`;
     },
   };
 
-  // A library's consumers import its stylesheets, which Vite emits after the plugin's
-  // generateBundle: one for the library, or with `build.cssCodeSplit` one per chunk, in the formats
-  // Vite emits them for.
+  // Vite writes a library's CSS to files, or into the chunks that insert it. There, the module
+  // stylesheets give way to their modules' rules, sorted, in place of the last of them.
+  const fillModuleStylesheets = async (
+    config: ResolvedConfig,
+    css: string,
+    encode: (sheet: string) => string = sheet => sheet,
+  ) => {
+    const sheets = [...css.matchAll(moduleStylesheetRE)];
+    if (!sheets.length) return;
+    const sheet = await processStylesheet(
+      config,
+      sheets.flatMap(([, index]) => libraryModuleRules[Number(index)]!),
+    );
+    let remaining = sheets.length;
+    return css.replace(moduleStylesheetRE, () => (--remaining ? '' : encode(sheet)));
+  };
+
   const library: Plugin = {
     name: 'vite-plugin-compiled-react:library',
     // Vite's app builder can create the plugins again for each environment, and keeps the first
     // instance of shared ones only: this one reads the rules of the first instance of the plugin.
     sharedDuringBuild: true,
+    renderChunk: {
+      order: 'post',
+      async handler(code) {
+        // Inside a string literal, whichever quotes a minifier gave it.
+        const filled = await fillModuleStylesheets(this.environment.config, code, sheet =>
+          JSON.stringify(sheet).slice(1, -1).replace(/['`$]/g, '\\$&'),
+        );
+        return filled === undefined ? null : { code: filled, map: null };
+      },
+    },
     generateBundle: {
       order: 'post',
-      async handler({ format }, bundle) {
-        const { config } = this.environment;
-        const { lib, cssCodeSplit, emitAssets } = config.build;
-        if (!rules.size || !emitAssets || !lib) return;
-        if (cssCodeSplit && format !== 'es' && format !== 'cjs') return;
-        const sheets: [name: string, rules: Iterable<string>][] = cssCodeSplit
-          ? Object.values(bundle).flatMap(chunk => {
-              if (chunk.type !== 'chunk') return [];
-              const chunkRules = chunk.moduleIds.flatMap(id => moduleRules.get(id) ?? []);
-              return chunkRules.length ? [[chunkStylesheetName(chunk), chunkRules]] : [];
-            })
-          : [[await libraryStylesheetName(config.root, lib), rules]];
-        for (const [name, sheetRules] of sheets) {
-          const source = await processStylesheet(config, sheetRules);
-          const own = Object.values(bundle).find(
-            (output): output is Rollup.OutputAsset =>
-              output.type === 'asset' && output.names.includes(name),
-          );
-          if (own) own.source += source;
-          else this.emitFile({ type: 'asset', name, source });
+      async handler(_, bundle) {
+        for (const output of Object.values(bundle)) {
+          if (output.type !== 'asset' || typeof output.source !== 'string') continue;
+          output.source =
+            (await fillModuleStylesheets(this.environment.config, output.source)) ?? output.source;
         }
       },
     },
   };
 
   return [plugin, library];
-}
-
-// Vite's file name for a library's stylesheet.
-async function libraryStylesheetName(root: string, { cssFileName, fileName }: LibraryOptions) {
-  if (typeof cssFileName === 'string') return `${cssFileName}.css`;
-  if (typeof fileName === 'string') return `${fileName}.css`;
-  for (let dir = root; ; dir = path.dirname(dir)) {
-    const { name } = JSON.parse(
-      await readFile(path.join(dir, 'package.json'), 'utf8').catch(() => '{}'),
-    );
-    if (name) return `${name.replace(/^@[^/]+\//, '')}.css`;
-    if (dir === path.dirname(dir)) return stylesheetName;
-  }
-}
-
-// Vite's file name for a chunk's stylesheet when a library splits its CSS.
-function chunkStylesheetName(chunk: Rollup.OutputChunk) {
-  const { dir, name } = path.posix.parse(chunk.name);
-  return chunk.isEntry ? `${name}.css` : path.posix.join(dir, `${name}.css`);
 }
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it
