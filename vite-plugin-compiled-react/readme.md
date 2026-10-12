@@ -29,7 +29,7 @@ const Greeting = () => (
 
 The `css` prop works in `.jsx` and `.tsx` files without importing Compiled. Compiled's other APIs (`css()`, `styled`, `cssMap`, `keyframes`) are imported from `@compiled/react` as usual, in `.js`, `.jsx`, `.ts` and `.tsx` files.
 
-Styles can use values imported from other modules, including through your `resolve.alias` entries.
+Styles can use values imported from other modules, including through your string `resolve.alias` entries.
 
 The `css` prop is typed on every HTML and SVG element once the plugin's types are part of your TypeScript program: either your `vite.config.ts` is, or add the plugin to `compilerOptions.types`:
 
