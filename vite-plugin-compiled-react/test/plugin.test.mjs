@@ -256,15 +256,24 @@ export const Logo = () => <p css={{
     assert.match(await stylesheet(await transform('src/Icon.jsx')), /\{content:"url\(\.\/icon\.svg\)"\}/);
   });
 
-  it("gives autoprefixer's copies of a rule the class its rule gets", async () => {
+  it("gives autoprefixer's copies of a rule the classes its rule has", async () => {
+    // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image, and the user's
+    // class in the other rule's selector.
     const { transform, stylesheet } = await serve({
       'src/icon.svg': svg,
-      'src/Input.jsx': `export const Input = () => <input css={{ '::placeholder': { backgroundImage: 'url(./icon.svg)' } }} />;`,
+      'src/Input.jsx': `export const Input = () => <p css={{
+  backgroundImage: 'url(./icon.svg)',
+  '& ._1itk1mit::placeholder': { backgroundImage: 'url(./icon.svg)' },
+}}><input className="_1itk1mit" /></p>;`,
     });
     const code = await transform('src/Input.jsx');
-    const [, name] = code.match(/ax\(\["(_\w+)"\]\)/);
     const css = await stylesheet(code);
-    assert.deepEqual(css.match(/\._\w+(?=::?[\w-]*placeholder)/g), [`.${name}`, `.${name}`], css);
+    const selectors = css.match(/[^{}]+(?=::(?:-moz-)?placeholder\{)/g);
+    assert.equal(selectors?.length, 2, css);
+    for (const selector of selectors) {
+      const [, name] = selector.match(/^\.(_\w+) \._1itk1mit$/) ?? assert.fail(css);
+      assert.ok(code.includes(name), css);
+    }
   });
 
   it('gives the same relative URL its own class and keyframes in each folder it resolves in', async () => {

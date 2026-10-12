@@ -443,7 +443,8 @@ async function resolveRules(
     }
   }
   const classNames = new Map<string, string>();
-  const copies: postcss.Rule[] = [];
+  const owners: { name: string; original: postcss.Rule }[] = [];
+  const copies: { rule: postcss.Rule; original: postcss.Rule }[] = [];
   const named = resolved.map(({ css, portable }, index) => {
     if (css === rules[index] && !keyframes.size) return css;
     const [unresolved, sheet, hashed] = [rules[index], css, portable].map(text =>
@@ -462,8 +463,9 @@ async function resolveRules(
       const original = originals[ruleIndex];
       if (rule.toString() === original.toString()) return;
       const name = ownClass(original);
-      // Autoprefixer's copy of a rule with a prefixed pseudo-element, which keeps the rule's class.
-      if (!name) return copies.push(rule);
+      // Autoprefixer's copy of a rule with a prefixed pseudo-class or pseudo-element.
+      if (!name) return copies.push({ rule, original });
+      owners.push({ name, original });
       // The rest of the name, which `ax` groups classes by, stays.
       const renamed =
         name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) +
@@ -473,8 +475,21 @@ async function resolveRules(
     });
     return sheet;
   });
-  for (const rule of copies) {
-    rule.selector = rule.selector.replace(/(?<=\.)_[\w-]+/g, name => classNames.get(name) ?? name);
+  // A copy keeps the class of the rule it was copied from, which has its declarations and its
+  // selector but for the prefixed pseudo-classes and pseudo-elements, so it gets that rule's name.
+  for (const { rule, original } of copies) {
+    const selector = new RegExp(
+      `^${original.selector.split(vendorPseudoRE).map(escapeRegExp).join('::?[\\w-]+')}$`,
+    );
+    const from = owners.find(
+      owner =>
+        selector.test(owner.original.selector) &&
+        owner.original.nodes.join(';') === original.nodes.join(';') &&
+        classRE(owner.name).test(original.selector),
+    );
+    if (from) {
+      rule.selector = rule.selector.replace(classRE(from.name), `.${classNames.get(from.name)}`);
+    }
   }
   babel.traverse(ast, {
     StringLiteral({ node }) {
@@ -501,6 +516,10 @@ function keyframesRules(css: string) {
   });
   return rules;
 }
+
+const vendorPseudoRE = /::?-(?:webkit|moz|ms|o)-[\w-]+/g;
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const classRE = (name: string) => new RegExp(`\\.${name}(?![\\w-])`, 'g');
 
