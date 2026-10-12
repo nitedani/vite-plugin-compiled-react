@@ -334,22 +334,25 @@ import.meta.hot.accept();`;
       const base = stylesheetBase(config);
       // The rules' URLs name public files and resolved files (resolveUrls): Vite resolves the URLs
       // of its modules' CSS only, so a public file gets the base here, and a file is emitted.
-      const source = await replaceUrls(code, async url => {
-        // On Windows, a resolved file starts with its drive.
-        const [, encoded, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
-        if (!encoded) return;
-        const file = decodeUrl(encoded);
-        if (config.publicDir && isFile(path.join(config.publicDir, file))) {
-          return base + encoded.slice(1) + suffix;
-        }
-        if (!isFile(file)) return;
-        const reference = this.emitFile({
-          type: 'asset',
-          name: path.basename(file),
-          source: await readFile(file),
-        });
-        return base + encodeURI(this.getFileName(reference)) + suffix;
-      });
+      const urls = await Promise.all(
+        cssUrls(code).map(async url => {
+          // On Windows, a resolved file starts with its drive.
+          const [, encoded, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
+          if (!encoded) return;
+          const file = decodeUrl(encoded);
+          if (config.publicDir && isFile(path.join(config.publicDir, file))) {
+            return base + encoded.slice(1) + suffix;
+          }
+          if (!isFile(file)) return;
+          const reference = this.emitFile({
+            type: 'asset',
+            name: path.basename(file),
+            source: await readFile(file),
+          });
+          return base + encodeURI(this.getFileName(reference)) + suffix;
+        }),
+      );
+      const source = writeUrls(code, urls);
       const fileName = this.getFileName(
         this.emitFile({ type: 'asset', name: stylesheetName, source }),
       );
@@ -381,20 +384,23 @@ async function resolveUrls(
   importer: string,
 ) {
   const { publicDir } = context.environment.config;
-  return replaceUrls(css, async url => {
-    const [, encoded, suffix] = url.match(/^([^?#]*)(.*)$/s)!;
-    if (!encoded || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(encoded)) return;
-    const file = decodeUrl(encoded);
-    if (file.startsWith('/') && publicDir && isFile(path.join(publicDir, file))) return;
-    // Like Vite's, a URL that isn't a path is first looked for beside its stylesheet.
-    for (const request of /^[./]/.test(file) ? [file] : [`./${file}`, file]) {
-      const resolved = await context.resolve(request, importer);
-      const [resolvedFile] = (!resolved?.external && resolved?.id.split('?')) || [];
-      if (resolvedFile && isFile(resolvedFile)) {
-        return encodeURI(resolvedFile).replace(/[?#]/g, encodeURIComponent) + suffix;
+  const urls = await Promise.all(
+    cssUrls(css).map(async url => {
+      const [, encoded, suffix] = url.match(/^([^?#]*)(.*)$/s)!;
+      if (!encoded || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(encoded)) return;
+      const file = decodeUrl(encoded);
+      if (file.startsWith('/') && publicDir && isFile(path.join(publicDir, file))) return;
+      // Like Vite's, a URL that isn't a path is first looked for beside its stylesheet.
+      for (const request of /^[./]/.test(file) ? [file] : [`./${file}`, file]) {
+        const resolved = await context.resolve(request, importer);
+        const [resolvedFile] = (!resolved?.external && resolved?.id.split('?')) || [];
+        if (resolvedFile && isFile(resolvedFile)) {
+          return encodeURI(resolvedFile).replace(/[?#]/g, encodeURIComponent) + suffix;
+        }
       }
-    }
-  });
+    }),
+  );
+  return writeUrls(css, urls);
 }
 
 // Names a rule's classes as Compiled does, after their declaration's value, with paths from the
@@ -415,18 +421,15 @@ function renameClasses(rule: string, classNames: Map<string, string>, root: stri
   return selectors + rule.slice(block);
 }
 
-// Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
-async function replaceUrls(
-  css: string,
-  replace: (url: string) => string | undefined | Promise<string | undefined>,
-) {
-  const urls = await Promise.all(
-    [...css.matchAll(cssUrlRE)].map(([, ...url]) =>
-      replace(unescapeCss(url.find(part => part != null)!)),
-    ),
-  );
+// The URLs of a stylesheet's url()s.
+const cssUrls = (css: string) =>
+  [...css.matchAll(cssUrlRE)].map(([, ...url]) => unescapeCss(url.find(part => part != null)!));
+
+// Replaces the URLs of a stylesheet's url()s, in their order, with the ones `urls` has.
+function writeUrls(css: string, urls: (string | undefined)[]) {
+  let index = 0;
   return css.replace(cssUrlRE, match => {
-    const url = urls.shift();
+    const url = urls[index++];
     return url === undefined ? match : `url(${JSON.stringify(url)})`;
   });
 }
