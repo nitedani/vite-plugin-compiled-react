@@ -62,3 +62,5 @@ compiled({
 - Extracted styles go into one stylesheet linked on every page, not a stylesheet per module.
 - The `cache` and `onIncludedFiles` options are removed.
 - The plugin no longer adds `@compiled/react` to `ssr.noExternal`.
+- In a build, the files the stylesheet's URLs point to are always emitted, never inlined under `build.assetsInlineLimit`, and their URLs get your `base` rather than going through `experimental.renderBuiltUrl`. To serve them from another host, set `base` to that host's URL.
+- A relative URL in a `css` prop resolves from the module it's written in, as in a CSS file, rather than from the project root.
