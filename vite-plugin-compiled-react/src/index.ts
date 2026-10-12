@@ -324,10 +324,11 @@ import.meta.hot.accept();`;
       // file is emitted.
       const source = await replaceUrls(code, async url => {
         // A path from the root, or from a package's relative URL, on Windows too.
-        const [, file, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
-        if (!file) return;
+        const [, encoded, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
+        if (!encoded) return;
+        const file = decodeUrl(encoded);
         if (config.publicDir && isFile(path.join(config.publicDir, file))) {
-          return config.base + file.slice(1) + suffix;
+          return config.base + encoded.slice(1) + suffix;
         }
         const asset = [path.join(config.root, file), file].find(isFile);
         if (!asset) return;
@@ -372,6 +373,15 @@ async function replaceUrls(
     const url = urls.shift();
     return url === undefined ? match : `url(${JSON.stringify(url)})`;
   });
+}
+
+// As Vite reads a file's URL: a URL it can't decode names the file as it is.
+function decodeUrl(url: string) {
+  try {
+    return decodeURI(url);
+  } catch {
+    return url;
+  }
 }
 
 const isFile = (file: string) => !!statSync(file, { throwIfNoEntry: false })?.isFile();

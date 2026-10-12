@@ -184,11 +184,12 @@ describe('the stylesheet', () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
   const urls = {
     'public/logo.svg': svg,
+    'public/my logo.svg': svg,
     'node_modules/ext-icons/package.json': `{ "name": "ext-icons", "type": "module", "main": "index.js" }`,
     'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
     'node_modules/ext-icons/index.compiled.css': '._1q8vicon{background-image:url(./icon.svg)}',
     'node_modules/ext-icons/icon.svg': svg,
-    'src/Logo.jsx': `import 'ext-icons';\nexport const Logo = () => <p css={{ backgroundImage: 'url(/logo.svg)' }} />;`,
+    'src/Logo.jsx': `import 'ext-icons';\nexport const Logo = () => <p css={{ backgroundImage: 'url(/logo.svg)', listStyleImage: 'url(/my%20logo.svg)' }} />;`,
   };
 
   it("resolves its URLs like Vite's CSS, with the base, and a package's relative to its .compiled.css", async () => {
@@ -199,23 +200,29 @@ describe('the stylesheet', () => {
       await fixture(inApp({ ...urls, 'index.html': `<script type="module" src="/src/Logo.jsx"></script>` })),
       'app (copy)',
     );
-    const { output } = await build({
-      root,
-      base: '/app/',
-      configFile: false,
-      logLevel: 'silent',
-      plugins: [compiled()],
-      build: {
-        write: false,
-        assetsInlineLimit: 0,
-        rollupOptions: { external: [/^react/, /^@compiled\/react/] },
-      },
-    });
-    const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
-    assert.ok(icon);
-    const [sheet] = output.filter(({ fileName }) => fileName.endsWith('.css'));
-    assert.match(sheet.source, /url\("\/app\/logo\.svg"\)/);
-    assert.match(sheet.source, new RegExp(`url\\("/app/${icon.fileName}"\\)`));
+    // The files the stylesheet's URLs point to, from the root of the output.
+    const buildUrls = async base => {
+      const { output } = await build({
+        root,
+        base,
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [compiled()],
+        build: {
+          write: false,
+          assetsInlineLimit: 0,
+          rollupOptions: { external: [/^react/, /^@compiled\/react/] },
+        },
+      });
+      const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
+      assert.ok(icon);
+      const sheet = output.find(({ fileName }) => fileName.endsWith('.css'));
+      const urls = [...sheet.source.matchAll(/url\("?([^")]+)"?\)/g)].map(([, url]) =>
+        new URL(url, `http://host/app/${sheet.fileName}`).pathname.replace('/app/', ''),
+      );
+      assert.deepEqual(urls.sort(), [icon.fileName, 'logo.svg', 'my%20logo.svg']);
+    };
+    await buildUrls('/app/');
 
     const { server, transform, script } = await serve(inApp(urls), dir => ({
       root: join(dir, 'app (copy)'),
