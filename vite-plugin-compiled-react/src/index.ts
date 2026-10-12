@@ -397,7 +397,6 @@ async function resolveUrls(
   });
 }
 
-// Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
 // Names a rule's classes as Compiled does, after their declaration's value, with paths from the
 // root so the names don't depend on where the project is. The rest of each name, which `ax` groups
 // classes by, stays, and so does its length, which keeps the module's source map right.
@@ -416,6 +415,7 @@ function renameClasses(rule: string, classNames: Map<string, string>, root: stri
   return selectors + rule.slice(block);
 }
 
+// Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
 async function replaceUrls(
   css: string,
   replace: (url: string) => string | undefined | Promise<string | undefined>,
