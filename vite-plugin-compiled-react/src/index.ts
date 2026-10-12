@@ -188,7 +188,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          const css = await resolveUrls(this, await readFile(packageStylesheet, 'utf8'), packageStylesheet);
+          const { css } = await resolveUrls(this, await readFile(packageStylesheet, 'utf8'), packageStylesheet);
           setRules(id, [css]);
           // A build links the stylesheet on every page.
           return server
@@ -245,7 +245,7 @@ import.meta.hot.accept();`;
         const imports = ast.program.body.flatMap(node =>
           node.type === 'ImportDeclaration' ? [node.source.value] : [],
         );
-        const result = await babel.transformFromAstAsync(ast, code, {
+        const generate = {
           filename: file,
           cloneInputAst: false,
           sourceMaps: true,
@@ -253,8 +253,11 @@ import.meta.hot.accept();`;
           retainLines: true,
           configFile: false,
           babelrc: false,
-          // Without extraction, the rules are read from it.
-          ast: !!server && !extractStyles,
+        };
+        const result = await babel.transformFromAstAsync(ast, code, {
+          ...generate,
+          // Renamed classes are written into it, and without extraction, the rules are read from it.
+          ast: true,
           plugins: [
             isJsxFile && enableCssProp,
             [
@@ -279,16 +282,16 @@ import.meta.hot.accept();`;
           ].filter(Boolean) as PluginItem[],
         });
         if (!result?.code) return;
-        // Compiled names a class after its declaration as written, so a URL that resolves to a
-        // different file in another folder needs a class of its own.
-        const classNames = new Map<string, string>();
-        const { root } = this.environment.config;
-        const styleRules = await Promise.all(
-          ((result.metadata as unknown as BabelFileMetadata).styleRules ?? []).map(async rule => {
-            const resolved = await resolveUrls(this, rule, file);
-            return resolved === rule ? rule : renameClasses(resolved, classNames, root);
-          }),
+        const { rules: styleRules, renamed } = await resolveRules(
+          this,
+          (result.metadata as unknown as BabelFileMetadata).styleRules ?? [],
+          file,
+          code,
+          result.ast!,
         );
+        let { code: output, map } = renamed
+          ? (await babel.transformFromAstAsync(result.ast!, code, generate))!
+          : result;
         // In dev, a module with rules depends on the files its styles can read values from:
         // Compiled reports some, and TypeScript drops the imports of the values it inlined.
         // TODO: rely on Compiled's report once https://github.com/atlassian-labs/compiled/issues/1960 is fixed
@@ -302,16 +305,13 @@ import.meta.hot.accept();`;
           }
         }
         setRules(id, styleRules);
-        let output = classNames.size
-          ? result.code.replace(/(?<![\w-])_[\w-]+/g, name => classNames.get(name) ?? name)
-          : result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
           const sheet = moduleStylesheetId(file);
           moduleRules.set(sheet, styleRules);
           // Imported last, so the rules follow the CSS of the module's imports.
           output += `\nimport ${JSON.stringify(sheet)};`;
         }
-        return { code: output, map: result.map };
+        return { code: output!, map };
       },
     },
     // Emitted once every module is compiled, which a module of the build can't wait for.
@@ -378,13 +378,14 @@ import.meta.hot.accept();`;
 // The stylesheet is one file, so each rule's URLs are resolved from the module that uses the rule,
 // as Vite resolves a stylesheet's: a public file stays as it is, and another file becomes its path.
 // Compiled evaluates imported styles in that module and doesn't say where a rule was written.
+// `portable` has each file's path from the root instead, the same wherever the project is.
 async function resolveUrls(
   context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
   css: string,
   importer: string,
 ) {
-  const { publicDir } = context.environment.config;
-  const urls = await Promise.all(
+  const { publicDir, root } = context.environment.config;
+  const files = await Promise.all(
     cssUrls(css).map(async url => {
       const [, encoded, suffix] = url.match(/^([^?#]*)(.*)$/s)!;
       if (!encoded || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(encoded)) return;
@@ -394,26 +395,84 @@ async function resolveUrls(
       for (const request of /^[./]/.test(file) ? [file] : [`./${file}`, file]) {
         const resolved = await context.resolve(request, importer);
         const [resolvedFile] = (!resolved?.external && resolved?.id.split('?')) || [];
-        if (resolvedFile && isFile(resolvedFile)) {
-          return encodeURI(resolvedFile).replace(/[?#]/g, encodeURIComponent) + suffix;
-        }
+        if (resolvedFile && isFile(resolvedFile)) return { resolvedFile, suffix };
       }
     }),
   );
-  return writeUrls(css, urls);
+  const write = (from: (file: string) => string) =>
+    writeUrls(
+      css,
+      files.map(
+        url =>
+          url &&
+          encodeURI(from(url.resolvedFile)).replace(/[?#]/g, encodeURIComponent) + url.suffix,
+      ),
+    );
+  return { css: write(file => file), portable: write(file => path.posix.relative(root, file)) };
 }
 
-// Names a rule's classes as Compiled does, after their declaration's value, with paths from the
-// root so the names don't depend on where the project is. The rest of each name, which `ax` groups
-// classes by, stays, and so does its length, which keeps the module's source map right.
-function renameClasses(rule: string, classNames: Map<string, string>, root: string) {
+// Compiled names a class, or keyframes, after the text of the CSS it names, so a URL that resolves
+// to a different file in another folder needs a name of its own. Each name Compiled generated for
+// a rule whose text changed gets the hash of its portable text instead, where Compiled wrote it
+// and nowhere else: in the module's rules, and in the string literals Compiled generated in its
+// code, which have no location in the source. Returns the rules, and whether the code changed.
+async function resolveRules(
+  context: Parameters<typeof resolveUrls>[0],
+  rules: string[],
+  file: string,
+  source: string,
+  ast: babel.types.File,
+) {
+  const resolved = await Promise.all(rules.map(rule => resolveUrls(context, rule, file)));
+  if (resolved.every(({ css }, index) => css === rules[index])) return { rules, renamed: false };
+  // Compiled names keyframes `k` and a hash of the keyframes() call, which isn't in the source.
+  const keyframes = new Map<string, string>();
+  resolved.forEach(({ css, portable }, index) => {
+    const name = css !== rules[index] && css.match(/^@keyframes (k[\da-z]+)\{/)?.[1];
+    if (name && !source.includes(name)) keyframes.set(name, `k${hash(portable)}`);
+  });
+  // A keyframes name is in its @keyframes rule, and in the declarations using it, after their
+  // rule's last `{`.
+  const withKeyframes = (rule: string) => {
+    const start = rule.startsWith('@keyframes ') ? 0 : rule.lastIndexOf('{');
+    return (
+      rule.slice(0, start) +
+      rule.slice(start).replace(/\bk[\da-z]+\b/g, name => keyframes.get(name) ?? name)
+    );
+  };
+  const literals: babel.types.StringLiteral[] = [];
+  babel.traverse(ast, {
+    StringLiteral({ node }) {
+      if (!node.loc) literals.push(node);
+    },
+  });
+  const generated = new Set(literals.flatMap(({ value }) => value.split(' ')));
+  const classNames = new Map<string, string>();
+  const named = resolved.map(({ css, portable }, index) => {
+    const rule = withKeyframes(css);
+    return rule === rules[index] || rule.startsWith('@keyframes ')
+      ? rule
+      : renameClasses(rule, withKeyframes(portable), generated, classNames);
+  });
+  for (const literal of literals) {
+    literal.value = literal.value.replace(/\S+/g, name => classNames.get(name) ?? name);
+  }
+  return { rules: named, renamed: classNames.size > 0 };
+}
+
+// Names the classes Compiled generated in a rule as Compiled does, after their declaration's
+// value. The rest of each name, which `ax` groups classes by, stays.
+function renameClasses(
+  rule: string,
+  portable: string,
+  generated: Set<string>,
+  classNames: Map<string, string>,
+) {
+  const value = portable.slice(portable.indexOf(':', portable.lastIndexOf('{')) + 1);
+  const valueHash = hash(value.replace(/\}+$/, '')).slice(0, ATOMIC_VALUE_HASH_LENGTH);
   const block = rule.lastIndexOf('{');
-  const value = rule.slice(rule.indexOf(':', block) + 1).replace(/\}+$/, '');
-  const portable = value.replace(/"((?:\/|[a-z]:\/)[^"]*)"/gi, (_, url: string) =>
-    JSON.stringify(path.posix.relative(encodeURI(root), url)),
-  );
-  const valueHash = hash(portable).slice(0, ATOMIC_VALUE_HASH_LENGTH);
-  const selectors = rule.slice(0, block).replace(/\.(_[\w-]+)/g, (_, name: string) => {
+  const selectors = rule.slice(0, block).replace(/\.(_[\w-]+)/g, (match, name: string) => {
+    if (!generated.has(name)) return match;
     const renamed = name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) + valueHash;
     classNames.set(name, renamed);
     return `.${renamed}`;

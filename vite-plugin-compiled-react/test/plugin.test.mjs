@@ -248,8 +248,16 @@ export const Logo = () => <p css={{
     assert.match(css, /mask-image:url\(\\"data:image\/svg\+xml.+id='mask'/);
   });
 
-  it('gives the same relative URL its own class in each folder it resolves in', async () => {
-    const icon = `export const Icon = () => <i css={{ backgroundImage: 'url(./icon.svg)' }} />;`;
+  it('gives the same relative URL its own class and keyframes in each folder it resolves in', async () => {
+    // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image.
+    const icon = `import { keyframes } from '@compiled/react';
+const fade = keyframes({ to: { backgroundImage: 'url(./icon.svg)' } });
+export const Icon = () => <i data-label="_1itk1mit" css={{
+  backgroundImage: 'url(./icon.svg)',
+  animationName: fade,
+  listStyleImage: 'image-set(url(./icon.svg) 1x, "/logo.svg" 2x)',
+  '& ._legacy': { maskImage: 'url(./icon.svg)' },
+}} />;`;
     // The root is `app`, and `c` takes its image from a folder beside it.
     const files = {
       'app/index.html': `<script type="module" src="/main.jsx"></script>`,
@@ -258,40 +266,63 @@ export const Logo = () => <p css={{
       'app/a/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="a"/>',
       'app/b/Icon.jsx': icon,
       'app/b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
-      'app/c/Icon.jsx': icon.replace('./', '@shared/'),
+      'app/c/Icon.jsx': icon.replaceAll('./', '@shared/'),
+      'app/public/logo.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
       'shared/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="c"/>',
     };
-    const inside = root => ({
-      root: join(root, 'app'),
-      resolve: { alias: { '@shared': join(root, 'shared') } },
+    const inside = checkout => ({
+      root: join(checkout, 'app'),
+      resolve: { alias: { '@shared': join(checkout, 'shared') } },
     });
-    // The class and URL of the one rule giving each module's code its background image.
+    // The classes of each module's code, and the URLs of its background image and of its
+    // animation's frames, each from the one rule its code uses.
     const images = (css, modules) =>
       modules.map(code => {
-        const rules = [...css.matchAll(/\.(_\w+)\{background-image:url\("?([^")]+)"?\)\}/g)];
-        const used = rules.filter(([, name]) => code.includes(name));
-        assert.equal(used.length, 1, css);
-        return used[0].slice(1);
+        const used = (pattern, uses = name => code.includes(name)) => {
+          const rules = [...css.matchAll(pattern)].filter(([, name]) => uses(name));
+          assert.equal(rules.length, 1, css);
+          return rules[0][2];
+        };
+        const frames = used(/\.(_\w+)\{animation-name:(\w+)\}/g);
+        return [
+          code.match(/["`]((?:_\w+ )+_\w+)["`]/)[1],
+          used(/\.(_\w+)\{background-image:url\("?([^")]+)"?\)\}/g),
+          used(/@keyframes (\w+)\{to\{background-image:url\("?([^")]+)"?\)/g, name => name === frames),
+        ];
       });
 
     const { root, ...config } = inside(await fixture(files));
     const output = await bundle(root, { ...config, build: { assetsInlineLimit: 0 } });
     const file = test => output.find(test);
-    const chunk = dir => file(({ facadeModuleId }) => facadeModuleId?.endsWith(`/${dir}/Icon.jsx`));
+    const chunks = ['a', 'b', 'c'].map(
+      dir => file(({ facadeModuleId }) => facadeModuleId?.endsWith(`/${dir}/Icon.jsx`)).code,
+    );
     const css = file(({ fileName }) => fileName.endsWith('.css')).source;
-    const built = images(css, ['a', 'b', 'c'].map(dir => chunk(dir).code)).map(([name, url]) => {
-      const { source } = file(({ fileName }) => `/${fileName}` === url);
-      return [name, Buffer.from(source).toString().match(/id="(\w)"/)[1]];
-    });
-    assert.deepEqual(built.map(([, image]) => image), ['a', 'b', 'c']);
+    const built = images(css, chunks).map(([classes, ...urls]) => [
+      classes,
+      ...urls.map(url => {
+        const { source } = file(({ fileName }) => `/${fileName}` === url);
+        return Buffer.from(source).toString().match(/id="(\w)"/)[1];
+      }),
+    ]);
+    assert.deepEqual(
+      built.map(([, ...images]) => images),
+      [['a', 'a'], ['b', 'b'], ['c', 'c']],
+    );
+    // Only the names Compiled generated change: a string and a class of the user's stay.
+    for (const chunk of chunks) assert.match(chunk, /"data-label":\s?["`]_1itk1mit["`]/);
+    assert.match(css, / \._legacy\{/);
 
-    // In another checkout, with Vite inlining the small files.
-    const { transform, sheet } = await serve(files, inside);
+    // In another checkout, deeper, with Vite inlining the small files.
+    const { transform, sheet } = await serve(
+      Object.fromEntries(Object.entries(files).map(([name, content]) => [`deeper/${name}`, content])),
+      checkout => inside(join(checkout, 'deeper')),
+    );
     const modules = await Promise.all(['a', 'b', 'c'].map(dir => transform(`${dir}/Icon.jsx`)));
     assert.deepEqual(
-      images(await sheet(), modules).map(([name, url]) => [
-        name,
-        decodeURIComponent(url).match(/id='(\w)'/)?.[1],
+      images(await sheet(), modules).map(([classes, ...urls]) => [
+        classes,
+        ...urls.map(url => decodeURIComponent(url).match(/id='(\w)'/)?.[1]),
       ]),
       built,
     );
