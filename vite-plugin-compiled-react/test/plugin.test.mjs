@@ -476,6 +476,27 @@ describe('dev', () => {
     );
   });
 
+  it('re-compiles a module whose styles read an object through destructuring', async () => {
+    const fixture = await serve({
+      'src/tokens.ts': `export const tokens = { color: 'red', background: 'green' };`,
+      'src/Card.jsx': `
+        import { tokens } from './tokens';
+        const { color } = tokens;
+        export const Card = () => {
+          const { background } = tokens;
+          return <p css={{ color, background }} />;
+        };
+      `,
+    });
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
+    await edit(fixture, 'src/tokens.ts', `export const tokens = { color: 'blue', background: 'purple' };`);
+    const css = await eventually(
+      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
+      /color:blue/,
+    );
+    assert.match(css, /background-color:purple/);
+  });
+
   it('re-compiles a module when a file in the middle of a chain of imports changes', async () => {
     const fixture = await serve({
       'src/palette.ts': `export const palette = { red: 'red', blue: 'blue' };`,
@@ -512,6 +533,24 @@ describe('dev', () => {
     assert.doesNotMatch(JSON.stringify(sent), /Card\.jsx/);
   });
 
+  it("doesn't update a module without rules when a module it imports changes", async () => {
+    const fixture = await serve({
+      'src/index.css': ``,
+      'src/main.tsx': `
+        import './index.css';
+        import App from './App.tsx';
+        export const root = <App />;
+      `,
+      'src/App.tsx': `export default () => <p css={{ color: 'green' }} />; import.meta.hot.accept();`,
+    });
+    for (const file of ['src/main.tsx', 'src/App.tsx']) await fixture.transform(file);
+    const sent = [];
+    fixture.server.environments.client.hot.send = payload => sent.push(payload);
+    await edit(fixture, 'src/App.tsx', `export default () => <p css={{ color: 'blue' }} />; import.meta.hot.accept();`);
+    await eventually(async () => JSON.stringify(sent), /App\.tsx/);
+    assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
+  });
+
   it('updates a .tsx module whose import TypeScript removed once Compiled inlined its value', async () => {
     const fixture = await serve({
       'src/colors.ts': `export const primary = 'red';`,
@@ -543,6 +582,7 @@ async function eventually(read, pattern) {
     value = await read();
   }
   assert.match(value, pattern);
+  return value;
 }
 
 async function fixture(files) {

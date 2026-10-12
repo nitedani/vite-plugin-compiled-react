@@ -1,4 +1,4 @@
-import babel, { type PluginItem, type PluginObj, type types } from '@babel/core';
+import babel, { type PluginItem, type PluginObj } from '@babel/core';
 // @ts-expect-error The package has no types.
 import transformJsxBabelPlugin from '@babel/plugin-transform-react-jsx';
 import compiledBabelPlugin, { type Resolver } from '@compiled/babel-plugin';
@@ -214,13 +214,10 @@ import.meta.hot.accept();`;
         }
         const extractStyles = extract || isReactServer(this.environment);
         const ast = await parse(code, file);
-        if (server) {
-          // Compiled doesn't report the files it reads a member expression from, and TypeScript
-          // drops the imports whose values Compiled inlined, which Vite's module graph then misses.
-          for (const source of await valueSources(resolver, file, ast)) {
-            addDependent(source, id);
-          }
-        }
+        // Taken before Compiled changes the module.
+        const imports = ast.program.body.flatMap(node =>
+          node.type === 'ImportDeclaration' ? [node.source.value] : [],
+        );
         const result = await babel.transformFromAstAsync(ast, code, {
           filename: file,
           cloneInputAst: false,
@@ -254,6 +251,16 @@ import.meta.hot.accept();`;
         });
         if (!result?.code) return;
         const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
+        // Compiled doesn't report the files it reads a member expression from, and TypeScript
+        // drops the imports whose values Compiled inlined, which Vite's module graph then misses.
+        // A module without rules has no values to update, and its imports would make it update
+        // with them, reloading the page when it isn't a Fast Refresh boundary. Without extraction,
+        // the rules aren't known, so every module counts.
+        if (server && (styleRules.length || !extractStyles)) {
+          for (const source of await valueSources(resolver, file, imports)) {
+            addDependent(source, id);
+          }
+        }
         addRules(styleRules);
         let output = result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
@@ -321,7 +328,7 @@ async function parse(code: string, file: string) {
 
 // The local files a module's styles can read values from: the modules it imports, and the modules
 // their values come from, transitively.
-async function valueSources(resolver: Resolver, file: string, ast: types.File) {
+async function valueSources(resolver: Resolver, file: string, requests: string[]) {
   const sources = new Set<string>();
   const follow = async (importer: string, requests: string[]) => {
     for (const request of requests) {
@@ -336,12 +343,7 @@ async function valueSources(resolver: Resolver, file: string, ast: types.File) {
       await follow(source, await valueImports(source));
     }
   };
-  await follow(
-    file,
-    ast.program.body.flatMap(node =>
-      node.type === 'ImportDeclaration' ? [node.source.value] : [],
-    ),
-  );
+  await follow(file, requests);
   return sources;
 }
 
