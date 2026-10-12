@@ -261,7 +261,7 @@ export const Icon = () => <i data-label="_1itk1mit" title="k1gurkcx" css={{
   animationName: fade,
   animation: \`\${slide} 1s\`,
   listStyleImage: 'image-set(url(./icon.svg) 1x, "/logo.svg" 2x)',
-  '& ._1itk1mit': { maskImage: 'url(./icon.svg)' },
+  '._1itk1mit &': { maskImage: 'url(./icon.svg)' },
   ['@keyframes ' + name]: { to: { backgroundImage: 'url(./icon.svg)' } },
   '::before': { content: label },
   '@media (min-width: 1px)': { animation: \`\${pulse} 1s\` },
@@ -324,7 +324,7 @@ export const slide = keyframes({ to: { borderImageSource: 'url(./icon.svg)' } })
     // Only the names Compiled generated change, where it wrote them: the user's string, class,
     // keyframes and content stay, even when they equal a generated name.
     for (const chunk of chunks) assert.match(chunk, /"data-label":\s?["`]_1itk1mit["`]/);
-    assert.equal(css.match(/ \._1itk1mit\{/g)?.length, 3, css);
+    assert.equal(css.match(/\._1itk1mit \._/g)?.length, 3, css);
     assert.match(css, /@keyframes kcustom\{/);
     assert.deepEqual(new Set(css.match(/content:"\w+"/g)), new Set(['content:"k1fhct6v"']));
     // Keyframes from another module resolve their URLs in each module using them.
