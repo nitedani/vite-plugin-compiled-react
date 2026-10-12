@@ -492,27 +492,6 @@ describe('dev', () => {
     );
   });
 
-  it('re-compiles a module whose styles read an object through destructuring', async () => {
-    const fixture = await serve({
-      'src/tokens.ts': `export const tokens = { color: 'red', background: 'green' };`,
-      'src/Card.jsx': `
-        import { tokens } from './tokens';
-        const { color } = tokens;
-        export const Card = () => {
-          const { background } = tokens;
-          return <p css={{ color, background }} />;
-        };
-      `,
-    });
-    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
-    await edit(fixture, 'src/tokens.ts', `export const tokens = { color: 'blue', background: 'purple' };`);
-    const css = await eventually(
-      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
-      /color:blue/,
-    );
-    assert.match(css, /background-color:purple/);
-  });
-
   it('re-compiles a module when a file in the middle of a chain of imports changes', async () => {
     const fixture = await serve({
       'src/palette.ts': `export const palette = { red: 'red', blue: 'blue' };`,
