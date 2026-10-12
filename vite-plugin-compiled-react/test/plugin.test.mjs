@@ -175,9 +175,19 @@ describe('the stylesheet', () => {
     'public/my logo.svg': svg,
     'node_modules/ext-icons/package.json': `{ "name": "ext-icons", "type": "module", "main": "index.js" }`,
     'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
-    'node_modules/ext-icons/index.compiled.css': '._1q8vicon{background-image:url(./icon.svg)}',
+    'node_modules/ext-icons/index.compiled.css':
+      '._1q8vicon{background-image:url(./icon.svg)}._1q8vbrnd{border-image-source:url(@/brand.svg)}',
     'node_modules/ext-icons/icon.svg': svg,
-    'src/Logo.jsx': `import 'ext-icons';\nexport const Logo = () => <p css={{ backgroundImage: 'url(/logo.svg)', listStyleImage: 'url(/my%20logo.svg)' }} />;`,
+    // Files with the same content would be emitted once.
+    'src/mask.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="mask"/>',
+    'src/brand.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="brand"/>',
+    'src/Logo.jsx': `import 'ext-icons';
+export const Logo = () => <p css={{
+  backgroundImage: 'url(/logo.svg)',
+  listStyleImage: 'url(/my%20logo.svg)',
+  maskImage: 'url(./mask.svg)',
+  borderImageSource: 'url(@/brand.svg)',
+}} />;`,
   };
 
   it("resolves its URLs like Vite's CSS, with the base, and a package's relative to its .compiled.css", async () => {
@@ -192,17 +202,23 @@ describe('the stylesheet', () => {
     const buildUrls = async (base, assetFileNames) => {
       const output = await bundle(root, {
         base,
+        resolve: { alias: { '@': join(root, 'src') } },
         build: { assetsInlineLimit: 0, rollupOptions: { output: { assetFileNames } } },
       });
-      const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
-      assert.ok(icon);
+      const [icon, mask, brand] = ['icon', 'mask', 'brand'].map(
+        name => output.find(({ fileName }) => fileName.includes(`${name}-`))?.fileName,
+      );
       const sheet = output.find(({ fileName }) => fileName.endsWith('.css'));
       // An absolute base stays in the URLs, which then work wherever the rules end up.
       const page = base.startsWith('.') ? `http://host/app/${sheet.fileName}` : 'http://host/x/y';
       const urls = [...sheet.source.matchAll(/url\("?([^")]+)"?\)/g)].map(([, url]) =>
         new URL(url, page).pathname.replace('/app/', ''),
       );
-      assert.deepEqual(urls.sort(), [icon.fileName, 'logo.svg', 'my%20logo.svg']);
+      assert.deepEqual(
+        urls.sort(),
+        // `mask-image` gets a prefixed copy.
+        [icon, mask, mask, brand, brand, 'logo.svg', 'my%20logo.svg'].sort(),
+      );
     };
     await buildUrls('/app/');
     // Relative to the stylesheet, wherever Vite puts it.
@@ -215,14 +231,17 @@ describe('the stylesheet', () => {
     const { server, transform, script } = await serve(inApp(urls), dir => ({
       root: join(dir, 'app (copy)'),
       base: '/app/',
+      resolve: { alias: { '@': join(dir, 'app (copy)/src') } },
     }));
     const icons = await transform('node_modules/ext-icons/index.js');
     const iconsSheet = icons.match(/import "\/app\/@id\/__x00__([^"]+)"/)[1];
     await server.environments.client.transformRequest('\0' + iconsSheet);
     const css = await script(await transform('src/Logo.jsx'));
     assert.match(css, /url\(\/app\/logo\.svg\)/);
-    // Vite inlines the small icon.
+    // Vite inlines the small files.
     assert.match(css, /_1q8vicon\{background-image:url\(\\"data:image\/svg\+xml/);
+    assert.match(css, /_1q8vbrnd\{border-image-source:url\(\\"data:image\/svg\+xml.+id='brand'/);
+    assert.match(css, /mask-image:url\(\\"data:image\/svg\+xml.+id='mask'/);
   });
 
   it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {

@@ -19,6 +19,7 @@ import {
   type Environment,
   type Plugin,
   type ResolvedConfig,
+  type Rollup,
   type Update,
   type ViteDevServer,
 } from 'vite';
@@ -183,12 +184,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          // The stylesheet is one file: relative URLs become the paths of their files.
-          const css = await replaceUrls(await readFile(packageStylesheet, 'utf8'), url =>
-            /^(?:[a-z][a-z\d+.-]*:|[/#]|$)/i.test(url)
-              ? undefined
-              : normalizePath(path.join(path.dirname(packageStylesheet), url)),
-          );
+          const css = await resolveUrls(this, await readFile(packageStylesheet, 'utf8'), packageStylesheet);
           setRules(id, [css]);
           // A build links the stylesheet on every page.
           return server
@@ -279,7 +275,11 @@ import.meta.hot.accept();`;
           ].filter(Boolean) as PluginItem[],
         });
         if (!result?.code) return;
-        const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
+        const styleRules = await Promise.all(
+          ((result.metadata as unknown as BabelFileMetadata).styleRules ?? []).map(rule =>
+            resolveUrls(this, rule, file),
+          ),
+        );
         // In dev, a module with rules depends on the files its styles can read values from:
         // Compiled reports some, and TypeScript drops the imports of the values it inlined.
         // TODO: rely on Compiled's report once https://github.com/atlassian-labs/compiled/issues/1960 is fixed
@@ -321,24 +321,23 @@ import.meta.hot.accept();`;
         config,
       );
       const base = stylesheetBase(config);
-      // Vite resolves the URLs of its modules' CSS only: a public file gets the base, and another
-      // file is emitted.
+      // The rules' URLs name public files and resolved files (resolveUrls): Vite resolves the URLs
+      // of its modules' CSS only, so a public file gets the base here, and a file is emitted.
       const source = await replaceUrls(code, async url => {
-        // A path from the root, or from a package's relative URL, on Windows too.
+        // On Windows, a resolved file starts with its drive.
         const [, encoded, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
         if (!encoded) return;
         const file = decodeUrl(encoded);
         if (config.publicDir && isFile(path.join(config.publicDir, file))) {
           return base + encoded.slice(1) + suffix;
         }
-        const asset = [path.join(config.root, file), file].find(isFile);
-        if (!asset) return;
+        if (!isFile(file)) return;
         const reference = this.emitFile({
           type: 'asset',
-          name: path.basename(asset),
-          source: await readFile(asset),
+          name: path.basename(file),
+          source: await readFile(file),
         });
-        return base + this.getFileName(reference) + suffix;
+        return base + encodeURI(this.getFileName(reference)) + suffix;
       });
       const fileName = this.getFileName(
         this.emitFile({ type: 'asset', name: stylesheetName, source }),
@@ -360,6 +359,30 @@ import.meta.hot.accept();`;
       if (dependentModules.length) return [...modules, ...dependentModules];
     },
   };
+}
+
+// The stylesheet is one file, so each rule's URLs are resolved from the file the rule is written in,
+// as Vite resolves a stylesheet's: a public file stays as it is, and another file becomes its path.
+async function resolveUrls(
+  context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
+  css: string,
+  importer: string,
+) {
+  const { publicDir } = context.environment.config;
+  return replaceUrls(css, async url => {
+    const [, encoded, suffix] = url.match(/^([^?#]*)(.*)$/s)!;
+    if (!encoded || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(encoded)) return;
+    const file = decodeUrl(encoded);
+    if (file.startsWith('/') && publicDir && isFile(path.join(publicDir, file))) return;
+    // Like Vite's, a URL that isn't a path is first looked for beside its stylesheet.
+    for (const request of /^[./]/.test(file) ? [file] : [`./${file}`, file]) {
+      const resolved = await context.resolve(request, importer);
+      const [resolvedFile] = (!resolved?.external && resolved?.id.split('?')) || [];
+      if (resolvedFile && isFile(resolvedFile)) {
+        return encodeURI(resolvedFile).replace(/[?#]/g, encodeURIComponent) + suffix;
+      }
+    }
+  });
 }
 
 // Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
