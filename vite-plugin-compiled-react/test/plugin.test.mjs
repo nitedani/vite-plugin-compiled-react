@@ -248,6 +248,14 @@ export const Logo = () => <p css={{
     assert.match(css, /mask-image:url\(\\"data:image\/svg\+xml.+id='mask'/);
   });
 
+  it("leaves alone a url() in a string's text", async () => {
+    const { transform, stylesheet } = await serve({
+      'src/icon.svg': svg,
+      'src/Icon.jsx': `export const Icon = () => <i css={{ '::before': { content: '"url(./icon.svg)"' } }} />;`,
+    });
+    assert.match(await stylesheet(await transform('src/Icon.jsx')), /\{content:"url\(\.\/icon\.svg\)"\}/);
+  });
+
   it('gives the same relative URL its own class and keyframes in each folder it resolves in', async () => {
     // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image, and `k1gurkcx`
     // the name it gives `fade` (`k1fhct6v` in `c`).

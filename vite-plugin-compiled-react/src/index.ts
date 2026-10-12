@@ -81,8 +81,9 @@ const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+\.compiled\.
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
-// A url() and its URL, quoted or not, with CSS escapes.
-const cssUrlRE = /\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^\s'"()\\])*))\s*\)/gi;
+// A url() and its URL, quoted or not, with CSS escapes. Strings and comments match whole, so the
+// url()s in their text don't.
+const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^\s'"()\\])*))\s*\)/gi;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
@@ -550,12 +551,17 @@ async function keyframesNames(code: string, file: string) {
 
 // The URLs of a stylesheet's url()s.
 const cssUrls = (css: string) =>
-  [...css.matchAll(cssUrlRE)].map(([, ...url]) => unescapeCss(url.find(part => part != null)!));
+  [...css.matchAll(cssUrlRE)]
+    .filter(([match]) => isUrl(match))
+    .map(([, ...url]) => unescapeCss(url.find(part => part != null)!));
+
+const isUrl = (match: string) => /^url/i.test(match);
 
 // Replaces the URLs of a stylesheet's url()s, in their order, with the ones `urls` has.
 function writeUrls(css: string, urls: (string | undefined)[]) {
   let index = 0;
   return css.replace(cssUrlRE, match => {
+    if (!isUrl(match)) return match;
     const url = urls[index++];
     return url === undefined ? match : `url(${JSON.stringify(url)})`;
   });
