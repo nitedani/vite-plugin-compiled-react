@@ -16,6 +16,7 @@ import {
   type Environment,
   type Plugin,
   type ResolvedConfig,
+  type Update,
   type ViteDevServer,
 } from 'vite';
 
@@ -55,6 +56,9 @@ declare module 'react' {
 const stylesheetName = 'vite-plugin-compiled-react.css';
 const stylesheetId = `virtual:${stylesheetName}`;
 const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
+// In dev, browsers get the stylesheet from a script that keeps the newest of its versions.
+const browserStylesheetId = 'virtual:vite-plugin-compiled-react.js';
+const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -92,11 +96,15 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
     },
     resolveId: {
       filter: { id: /^virtual:vite-plugin-compiled-react\.css$/ },
-      handler: id => '\0' + id,
+      handler(id) {
+        return server && this.environment.config.consumer === 'client'
+          ? '\0' + browserStylesheetId
+          : '\0' + id;
+      },
     },
     load: {
-      filter: { id: [stylesheetRE, styleCacheRE] },
-      handler(id) {
+      filter: { id: [stylesheetRE, browserStylesheetRE, styleCacheRE] },
+      async handler(id) {
         if (styleCacheRE.test(id)) {
           return isReactServer(this.environment)
             ? `export default {};
@@ -105,7 +113,21 @@ export const useCache = () => {
 };`
             : undefined;
         }
-        return stylesheet();
+        if (stylesheetRE.test(id)) return stylesheet();
+        const { config } = this.environment;
+        const version = rules.size;
+        const { code } = await preprocessCSS(
+          stylesheet(),
+          path.join(config.root, stylesheetName),
+          config,
+        );
+        // A page can run an older version after a newer one: the version with more rules wins.
+        return `import { updateStyle } from '/@vite/client';
+if (!(import.meta.hot.data.rules >= ${version})) {
+  import.meta.hot.data.rules = ${version};
+  updateStyle(${JSON.stringify('\0' + stylesheetId)}, ${JSON.stringify(code)});
+}
+import.meta.hot.accept();`;
       },
     },
     transform: {
@@ -306,13 +328,28 @@ function importStylesheet({ types: t }: typeof babel): PluginObj {
 }
 
 // The stylesheet is out of date in every environment once a module adds rules. Its new URL makes
-// the browser fetch it before running that module, and every module transformed afterwards.
+// the browser fetch it before running that module, and every module transformed afterwards. Pages
+// that already loaded it, as a script or a <link>, get it as a hot update.
 function refreshStylesheet(server: ViteDevServer) {
   const timestamp = Date.now();
-  for (const { moduleGraph } of Object.values(server.environments)) {
-    for (const mod of moduleGraph.getModulesByFile('\0' + stylesheetId) ?? []) {
-      moduleGraph.invalidateModule(mod);
-      mod.lastHMRTimestamp = timestamp;
+  for (const environment of Object.values(server.environments)) {
+    const { moduleGraph } = environment;
+    const updates: Update[] = [];
+    for (const id of [stylesheetId, browserStylesheetId]) {
+      for (const mod of moduleGraph.getModulesByFile('\0' + id) ?? []) {
+        moduleGraph.invalidateModule(mod);
+        mod.lastHMRTimestamp = timestamp;
+        if (mod.type === 'css') {
+          // Vite's client finds the <link>s to replace by their URL.
+          const path = `/@id/__x00__${id}`;
+          updates.push({ type: 'css-update', path, acceptedPath: path, timestamp });
+        } else if (mod.isSelfAccepting) {
+          updates.push({ type: 'js-update', path: mod.url, acceptedPath: mod.url, timestamp });
+        }
+      }
+    }
+    if (environment.config.consumer === 'client' && updates.length) {
+      environment.hot.send({ type: 'update', updates });
     }
   }
 }

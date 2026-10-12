@@ -146,6 +146,38 @@ describe('the stylesheet', () => {
       '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
     );
   });
+
+  it('keeps the newest rules in dev when a page runs an older version after a newer one', async () => {
+    const { server, transform } = await serve({
+      'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
+      'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+    });
+    const load = async file =>
+      (await server.environments.client.transformRequest(stylesheetImport(await transform(file)))).code;
+    const older = await load('src/Banner.jsx');
+    const newer = await load('src/Card.jsx');
+    const applied = [];
+    globalThis.applyStyle = (id, css) => applied.push(css);
+    await runInBrowser(newer);
+    await runInBrowser(older);
+    assert.deepEqual(applied, ['._syaz5scu{color:red}._syazbf54{color:green}']);
+  });
+
+  it('is sent to pages that loaded it in dev when rules are added, also by a server environment', async () => {
+    const { server, transform } = await serve({
+      'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
+      'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+    });
+    const { client, ssr } = server.environments;
+    await client.transformRequest(stylesheetImport(await transform('src/Banner.jsx')));
+    const sent = [];
+    client.hot.send = payload => sent.push(payload);
+    await ssr.transformRequest('/src/Card.jsx');
+    assert.deepEqual(
+      sent.flatMap(({ updates }) => updates.map(({ type, path }) => [type, path])),
+      [['js-update', '\0virtual:vite-plugin-compiled-react.js']],
+    );
+  });
 });
 
 describe('React Server environments', () => {
@@ -247,8 +279,21 @@ async function fixture(files) {
   return root;
 }
 
+// Runs a module served to the browser, with Vite's client stubbed.
+async function runInBrowser(code) {
+  const viteClient = `data:text/javascript,
+    const data = {};
+    export const createHotContext = () => ({ data, accept() {} });
+    export const updateStyle = (...args) => globalThis.applyStyle(...args);`;
+  await import(
+    `data:text/javascript,${encodeURIComponent(code.replace(/(["'])\/@vite\/client\1/g, JSON.stringify(viteClient)))}`
+  );
+}
+
+// The id of the stylesheet a module imports, with its query.
 function stylesheetImport(code) {
-  return code.match(/import "(\/@id\/__x00__virtual:vite-plugin-compiled-react\.css[^"]*)"/)?.[1];
+  const url = code.match(/import "\/@id\/__x00__(virtual:vite-plugin-compiled-react\.js[^"]*)"/)?.[1];
+  return url && '\0' + url;
 }
 
 async function serve(files, config = {}) {
