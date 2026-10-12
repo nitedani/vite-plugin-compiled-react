@@ -176,8 +176,10 @@ describe('the stylesheet', () => {
     'node_modules/ext-icons/package.json': `{ "name": "ext-icons", "type": "module", "main": "index.js" }`,
     'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
     'node_modules/ext-icons/index.compiled.css':
-      '._1q8vicon{background-image:url(./icon.svg)}._1q8vbrnd{border-image-source:url(@/brand.svg)}',
+      '._1q8vicon{background-image:url(./icon.svg)}._1q8vbrnd{border-image-source:url(@/brand.svg)}' +
+      '._1q8vspce{list-style-image:url("./my\\ icon.svg")}',
     'node_modules/ext-icons/icon.svg': svg,
+    'node_modules/ext-icons/my icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="space"/>',
     // Files with the same content would be emitted once.
     'src/mask.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="mask"/>',
     'src/brand.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="brand"/>',
@@ -205,8 +207,8 @@ export const Logo = () => <p css={{
         resolve: { alias: { '@': join(root, 'src') } },
         build: { assetsInlineLimit: 0, rollupOptions: { output: { assetFileNames } } },
       });
-      const [icon, mask, brand] = ['icon', 'mask', 'brand'].map(
-        name => output.find(({ fileName }) => fileName.includes(`${name}-`))?.fileName,
+      const [icon, mask, brand, space] = ['/icon', 'mask', 'brand', 'my icon'].map(name =>
+        encodeURI(output.find(({ fileName }) => fileName.includes(`${name}-`))?.fileName),
       );
       const sheet = output.find(({ fileName }) => fileName.endsWith('.css'));
       // An absolute base stays in the URLs, which then work wherever the rules end up.
@@ -217,7 +219,7 @@ export const Logo = () => <p css={{
       assert.deepEqual(
         urls.sort(),
         // `mask-image` gets a prefixed copy.
-        [icon, mask, mask, brand, brand, 'logo.svg', 'my%20logo.svg'].sort(),
+        [icon, mask, mask, brand, brand, space, 'logo.svg', 'my%20logo.svg'].sort(),
       );
     };
     await buildUrls('/app/');

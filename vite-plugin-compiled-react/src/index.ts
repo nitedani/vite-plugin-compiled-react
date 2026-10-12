@@ -78,8 +78,8 @@ const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+\.compiled\.
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
-// A url() and its URL, quoted or not.
-const cssUrlRE = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s'"()]*))\s*\)/gi;
+// A url() and its URL, quoted or not, with CSS escapes.
+const cssUrlRE = /\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^\s'"()\\])*))\s*\)/gi;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
@@ -391,7 +391,9 @@ async function replaceUrls(
   replace: (url: string) => string | undefined | Promise<string | undefined>,
 ) {
   const urls = await Promise.all(
-    [...css.matchAll(cssUrlRE)].map(([, ...url]) => replace(url.find(part => part != null)!)),
+    [...css.matchAll(cssUrlRE)].map(([, ...url]) =>
+      replace(unescapeCss(url.find(part => part != null)!)),
+    ),
   );
   return css.replace(cssUrlRE, match => {
     const url = urls.shift();
@@ -421,6 +423,12 @@ function stylesheetBase({ base, build }: ResolvedConfig) {
       );
   return `${path.posix.relative(directory, '') || '.'}/`;
 }
+
+// A CSS escape is a backslash before a character, or before a code point in hex.
+const unescapeCss = (value: string) =>
+  value.replace(/\\(?:([\da-f]{1,6})\s?|(.))/gis, (_, hex: string | undefined, char: string) =>
+    hex ? String.fromCodePoint(parseInt(hex, 16)) : char,
+  );
 
 // As Vite reads a file's URL: a URL it can't decode names the file as it is.
 function decodeUrl(url: string) {
