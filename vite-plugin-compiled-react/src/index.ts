@@ -443,6 +443,7 @@ async function resolveRules(
     }
   }
   const classNames = new Map<string, string>();
+  const copies: postcss.Rule[] = [];
   const named = resolved.map(({ css, portable }, index) => {
     if (css === rules[index] && !keyframes.size) return css;
     const [unresolved, sheet, hashed] = [rules[index], css, portable].map(text =>
@@ -459,8 +460,10 @@ async function resolveRules(
     const [originals, hashedRules] = [unresolved, hashed].map(styleRules);
     styleRules(sheet).forEach((rule, ruleIndex) => {
       const original = originals[ruleIndex];
-      const name = rule.toString() !== original.toString() && ownClass(original);
-      if (!name) return;
+      if (rule.toString() === original.toString()) return;
+      const name = ownClass(original);
+      // Autoprefixer's copy of a rule with a prefixed pseudo-element, which keeps the rule's class.
+      if (!name) return copies.push(rule);
       // The rest of the name, which `ax` groups classes by, stays.
       const renamed =
         name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) +
@@ -468,14 +471,17 @@ async function resolveRules(
       classNames.set(name, renamed);
       rule.selector = rule.selector.replace(classRE(name), `.${renamed}`);
     });
-    return sheet.toString();
+    return sheet;
   });
+  for (const rule of copies) {
+    rule.selector = rule.selector.replace(/(?<=\.)_[\w-]+/g, name => classNames.get(name) ?? name);
+  }
   babel.traverse(ast, {
     StringLiteral({ node }) {
       if (!node.loc) node.value = node.value.replace(/\S+/g, name => classNames.get(name) ?? name);
     },
   });
-  return { rules: named, renamed: classNames.size > 0 };
+  return { rules: named.map(String), renamed: classNames.size > 0 };
 }
 
 // The rules of a stylesheet.

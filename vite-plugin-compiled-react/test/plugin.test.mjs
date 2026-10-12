@@ -256,6 +256,17 @@ export const Logo = () => <p css={{
     assert.match(await stylesheet(await transform('src/Icon.jsx')), /\{content:"url\(\.\/icon\.svg\)"\}/);
   });
 
+  it("gives autoprefixer's copies of a rule the class its rule gets", async () => {
+    const { transform, stylesheet } = await serve({
+      'src/icon.svg': svg,
+      'src/Input.jsx': `export const Input = () => <input css={{ '::placeholder': { backgroundImage: 'url(./icon.svg)' } }} />;`,
+    });
+    const code = await transform('src/Input.jsx');
+    const [, name] = code.match(/ax\(\["(_\w+)"\]\)/);
+    const css = await stylesheet(code);
+    assert.deepEqual(css.match(/\._\w+(?=::?[\w-]*placeholder)/g), [`.${name}`, `.${name}`], css);
+  });
+
   it('gives the same relative URL its own class and keyframes in each folder it resolves in', async () => {
     // `_1itk1mit` is the class Compiled names `url(./icon.svg)`'s background image, and `k1gurkcx`
     // the name it gives `fade` (`k1fhct6v` in `c`).
