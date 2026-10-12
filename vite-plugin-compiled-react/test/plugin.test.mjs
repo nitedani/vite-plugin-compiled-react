@@ -173,6 +173,8 @@ describe('the stylesheet', () => {
   const urls = {
     'public/logo.svg': svg,
     'public/my logo.svg': svg,
+    // Shadowed by the public file, as in Vite.
+    'logo.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="root"/>',
     'node_modules/ext-icons/package.json': `{ "name": "ext-icons", "type": "module", "main": "index.js" }`,
     'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
     'node_modules/ext-icons/index.compiled.css':
