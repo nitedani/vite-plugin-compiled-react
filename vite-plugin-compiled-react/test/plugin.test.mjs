@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Window } from 'happy-dom';
-import { build, createRunnableDevEnvironment, createServer } from 'vite';
+import { build, createBuilder, createRunnableDevEnvironment, createServer } from 'vite';
 import { compiled } from '../lib/index.js';
 
 // Fixtures live in the package, so they resolve @compiled/react and react from its node_modules.
@@ -201,6 +201,32 @@ describe('the stylesheet', () => {
         ['index.css', '.own{color:#00f}._syaz5scu{color:red}'],
         ['banner.css', '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
       ],
+    );
+  });
+
+  it("goes into a library's stylesheet when Vite's app builder builds it", async () => {
+    // The app builder loads the config file again for each environment it builds.
+    const builder = await createBuilder({
+      root: await fixture({
+        'vite.config.js': `
+          import { compiled } from '../lib/index.js';
+          export default {
+            logLevel: 'silent',
+            plugins: [compiled()],
+            build: {
+              write: false,
+              lib: { entry: 'src/index.jsx', formats: ['es'], fileName: 'my-lib' },
+              rollupOptions: { external: [/^react/, /^@compiled\\/react/] },
+            },
+          };
+        `,
+        'src/index.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+      }),
+    });
+    const [{ output }] = await builder.build(builder.environments.client);
+    assert.equal(
+      output.find(({ fileName }) => fileName === 'my-lib.css')?.source,
+      '._syaz5scu{color:red}',
     );
   });
 

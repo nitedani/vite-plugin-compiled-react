@@ -250,6 +250,9 @@ import.meta.hot.accept();`;
   // Vite emits them for.
   const library: Plugin = {
     name: 'vite-plugin-compiled-react:library',
+    // Vite's app builder can create the plugins again for each environment, and keeps the first
+    // instance of shared ones only: this one reads the rules of the first instance of the plugin.
+    sharedDuringBuild: true,
     generateBundle: {
       order: 'post',
       async handler({ format }, bundle) {
