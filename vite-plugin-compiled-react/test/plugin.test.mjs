@@ -197,16 +197,19 @@ describe('the stylesheet', () => {
       const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
       assert.ok(icon);
       const sheet = output.find(({ fileName }) => fileName.endsWith('.css'));
+      // An absolute base stays in the URLs, which then work wherever the rules end up.
+      const page = base.startsWith('.') ? `http://host/app/${sheet.fileName}` : 'http://host/x/y';
       const urls = [...sheet.source.matchAll(/url\("?([^")]+)"?\)/g)].map(([, url]) =>
-        new URL(url, `http://host/app/${sheet.fileName}`).pathname.replace('/app/', ''),
+        new URL(url, page).pathname.replace('/app/', ''),
       );
       assert.deepEqual(urls.sort(), [icon.fileName, 'logo.svg', 'my%20logo.svg']);
     };
     await buildUrls('/app/');
     // Relative to the stylesheet, wherever Vite puts it.
     await buildUrls('./');
+    await buildUrls('./', 'a/b/[name]-[hash][extname]');
     await buildUrls('./', ({ names }) =>
-      names[0].endsWith('.css') ? 'css/[name]-[hash][extname]' : 'img/[name]-[hash][extname]',
+      names[0].endsWith('.css') ? 'css/nested/[name]-[hash][extname]' : 'img/[name]-[hash][extname]',
     );
 
     const { server, transform, script } = await serve(inApp(urls), dir => ({
