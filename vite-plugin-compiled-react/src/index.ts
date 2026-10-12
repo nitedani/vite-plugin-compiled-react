@@ -88,6 +88,13 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
     enforce: 'pre',
     // A build's client stylesheet then has the rules of the environments built before it.
     sharedDuringBuild: true,
+    configEnvironment(name, config) {
+      // The compiled modules import Compiled's runtime, which Vite's dependency scan doesn't see
+      // in their source: discovered on a page load, it makes Vite reload the page.
+      if ((config.consumer ?? (name === 'client' ? 'client' : 'server')) === 'client') {
+        return { optimizeDeps: { include: ['@compiled/react/runtime'] } };
+      }
+    },
     configResolved(config) {
       extract =
         typeof options.extract === 'object'

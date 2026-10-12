@@ -241,6 +241,13 @@ describe('React Server environments', () => {
 });
 
 describe('dev', () => {
+  it("pre-bundles Compiled's runtime, which compiled modules import, for the browser only", async () => {
+    const { server } = await serve({});
+    const { client, ssr } = server.environments;
+    assert.ok(client.config.optimizeDeps.include.includes('@compiled/react/runtime'));
+    assert.ok(!ssr.config.optimizeDeps.include?.includes('@compiled/react/runtime'));
+  });
+
   it('re-compiles a module when a module it read values from changes', async () => {
     const fixture = await serve({
       'src/palette.ts': `export const red = 'red';`,
