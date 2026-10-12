@@ -149,13 +149,14 @@ describe('the stylesheet', () => {
   });
 
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
-    const buildLibrary = async (files, lib) => {
+    const buildLibrary = async (files, lib, buildOptions) => {
       const [{ output }] = await build({
         root: await fixture(files),
         configFile: false,
         logLevel: 'silent',
         plugins: [compiled()],
         build: {
+          ...buildOptions,
           write: false,
           lib: { entry: 'src/index.jsx', formats: ['es'], ...lib },
           rollupOptions: { external: [/^react/, /^@compiled\/react/] },
@@ -183,6 +184,23 @@ describe('the stylesheet', () => {
     assert.deepEqual(
       await buildLibrary({ 'src/index.jsx': card }, { fileName: 'ui', cssFileName: 'styles' }),
       [['styles.css', '._syaz5scu{color:red}']],
+    );
+    // With its CSS split, each entry's stylesheet has the rules of the entry's modules, sorted.
+    assert.deepEqual(
+      await buildLibrary(
+        {
+          'src/index.jsx': `import './own.css';\n${card}`,
+          'src/own.css': `.own { color: blue }`,
+          'src/Wide.jsx': `export const Wide = () => <p css={{ color: 'green', '@media (min-width: 600px)': { color: 'blue' } }} />;`,
+          'src/banner.jsx': `export { Wide } from './Wide';\nexport const Banner = () => <p css={{ color: 'red' }} />;`,
+        },
+        { entry: { index: 'src/index.jsx', banner: 'src/banner.jsx' } },
+        { cssCodeSplit: true },
+      ),
+      [
+        ['index.css', '.own{color:#00f}._syaz5scu{color:red}'],
+        ['banner.css', '._syaz5scu{color:red}._syazbf54{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
+      ],
     );
   });
 
