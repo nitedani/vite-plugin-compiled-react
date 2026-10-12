@@ -235,7 +235,7 @@ describe('the stylesheet', () => {
     const { client } = fixture.server.environments;
     const ext = await client.transformRequest('/node_modules/ext-lib/index.js');
     const script = ext.code.match(/import "(\/@id\/__x00__[^"]+)"/)[1].replace('/@id/__x00__', '\0');
-    assert.match(script, /index\.compiled\.css\.js$/);
+    assert.match(script, /index\.compiled\.css\.js(?:\?|$)/);
     const stylesheet = async () => {
       assert.ok(stylesheetImport((await client.transformRequest(script)).code));
       return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
