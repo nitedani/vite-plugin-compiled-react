@@ -538,43 +538,27 @@ describe('dev', () => {
     assert.doesNotMatch(JSON.stringify(sent), /Card\.jsx/);
   });
 
-  it("doesn't update a module without rules when a module it imports changes", async () => {
-    const fixture = await serve({
-      'src/index.css': ``,
-      'src/main.tsx': `
-        import './index.css';
-        import App from './App.tsx';
-        export const root = <App />;
-      `,
-      'src/App.tsx': `export default () => <p css={{ color: 'green' }} />; import.meta.hot.accept();`,
-    });
-    for (const file of ['src/main.tsx', 'src/App.tsx']) await fixture.transform(file);
-    const sent = [];
-    fixture.server.environments.client.hot.send = payload => sent.push(payload);
-    await edit(fixture, 'src/App.tsx', `export default () => <p css={{ color: 'blue' }} />; import.meta.hot.accept();`);
-    await eventually(async () => JSON.stringify(sent), /App\.tsx/);
-    assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
-  });
-
-  it("doesn't update a module without rules when a module it imports changes, without extraction", async () => {
-    const fixture = await serve(
-      {
-        'src/index.css': ``,
-        'src/main.tsx': `
-          import './index.css';
-          import App from './App.tsx';
-          export const root = <App />;
-        `,
-        'src/App.tsx': `export default () => <p css={{ color: 'green' }} />; import.meta.hot.accept();`,
-      },
-      { extract: false },
-    );
-    for (const file of ['src/main.tsx', 'src/App.tsx']) await fixture.transform(file);
-    const sent = [];
-    fixture.server.environments.client.hot.send = payload => sent.push(payload);
-    await edit(fixture, 'src/App.tsx', `export default () => <p css={{ color: 'blue' }} />; import.meta.hot.accept();`);
-    await eventually(async () => JSON.stringify(sent), /App\.tsx/);
-    assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
+  it("doesn't update a module without rules when a module it imports changes, with or without extraction", async () => {
+    for (const config of [{}, { extract: false }]) {
+      const fixture = await serve(
+        {
+          'src/index.css': ``,
+          'src/main.tsx': `
+            import './index.css';
+            import App from './App.tsx';
+            export const root = <App />;
+          `,
+          'src/App.tsx': `export default () => <p css={{ color: 'green' }} />; import.meta.hot.accept();`,
+        },
+        config,
+      );
+      for (const file of ['src/main.tsx', 'src/App.tsx']) await fixture.transform(file);
+      const sent = [];
+      fixture.server.environments.client.hot.send = payload => sent.push(payload);
+      await edit(fixture, 'src/App.tsx', `export default () => <p css={{ color: 'blue' }} />; import.meta.hot.accept();`);
+      await eventually(async () => JSON.stringify(sent), /App\.tsx/);
+      assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
+    }
   });
 
   it('re-compiles a module when a file in the middle of a chain of imports changes, without extraction', async () => {
