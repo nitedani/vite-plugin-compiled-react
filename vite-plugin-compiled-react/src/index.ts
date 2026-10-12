@@ -320,12 +320,7 @@ import.meta.hot.accept();`;
         path.join(config.root, stylesheetName),
         config,
       );
-      // With a relative base, URLs are relative to the stylesheet, in the directory Vite would put
-      // a CSS file of that name in.
-      const base =
-        !config.base || config.base.startsWith('.')
-          ? `${path.posix.relative(assetDirectory(config, stylesheetName), '') || '.'}/`
-          : config.base;
+      const base = stylesheetBase(config);
       // Vite resolves the URLs of its modules' CSS only: a public file gets the base, and another
       // file is emitted.
       const source = await replaceUrls(code, async url => {
@@ -381,23 +376,27 @@ async function replaceUrls(
   });
 }
 
-// As Vite finds the directory of a CSS file it's about to emit.
-function assetDirectory({ build }: ResolvedConfig, name: string) {
+// The base of the stylesheet's URLs. A relative base is relative to the stylesheet, in the
+// directory Vite would put a CSS file of its name in, found as Vite finds it.
+function stylesheetBase({ base, build }: ResolvedConfig) {
+  if (base && !base.startsWith('.')) return base;
   const { output } = build.rollupOptions;
   const { assetFileNames } = (Array.isArray(output) ? output[0] : output) ?? {};
-  if (!assetFileNames) return build.assetsDir;
-  return path.posix.dirname(
-    typeof assetFileNames === 'string'
-      ? assetFileNames
-      : // Rollup and Rolldown type a missing original file differently.
-        assetFileNames({
-          type: 'asset',
-          name,
-          names: [name],
-          originalFileNames: [],
-          source: '',
-        } as unknown as Parameters<typeof assetFileNames>[0]),
-  );
+  const directory = !assetFileNames
+    ? build.assetsDir
+    : path.posix.dirname(
+        typeof assetFileNames === 'string'
+          ? assetFileNames
+          : // Rollup and Rolldown type a missing original file differently.
+            assetFileNames({
+              type: 'asset',
+              name: stylesheetName,
+              names: [stylesheetName],
+              originalFileNames: [],
+              source: '',
+            } as unknown as Parameters<typeof assetFileNames>[0]),
+      );
+  return `${path.posix.relative(directory, '') || '.'}/`;
 }
 
 // As Vite reads a file's URL: a URL it can't decode names the file as it is.
