@@ -656,6 +656,30 @@ describe('dev', () => {
     await eventually(async () => JSON.stringify(sent), /"path":"\/src\/App\.tsx"/);
     assert.match(await fixture.stylesheet(await fixture.transform('src/App.tsx')), /color:blue/);
   });
+
+  it('updates a module when a file outside the root that it reads a value from is edited', async () => {
+    const fixture = await serve(
+      {
+        'tokens.ts': `export const primary = 'red';`,
+        'app/src/Card.tsx': `
+          import { primary } from '@tokens';
+          export const Card = () => <p css={{ color: primary }} />;
+        `,
+      },
+      dir => ({
+        root: join(dir, 'app'),
+        server: { middlewareMode: true, ws: false, fs: { allow: [dir] } },
+        resolve: { alias: { '@tokens': join(dir, 'tokens.ts') } },
+      }),
+    );
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.tsx')), /color:red/);
+    // Vite only sees the edit if it watches the file.
+    await writeFile(join(fixture.root, 'tokens.ts'), `export const primary = 'blue';`);
+    await eventually(
+      async () => fixture.stylesheet(await fixture.transform('src/Card.tsx')),
+      /color:blue/,
+    );
+  });
 });
 
 async function edit({ root, server }, file, content) {

@@ -100,8 +100,11 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
-  const addDependent = (file: string, id: string) =>
+  const addDependent = (file: string, id: string) => {
     dependents.set(file, (dependents.get(file) ?? new Set()).add(id));
+    // Vite only watches the files under its root and the modules in its graph.
+    server?.watcher.add(file);
+  };
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
   const stylesheet = (sheetRules: Iterable<string> = new Set([...rules.values()].flat())) =>
