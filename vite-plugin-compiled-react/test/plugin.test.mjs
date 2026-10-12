@@ -149,6 +149,52 @@ describe('the stylesheet', () => {
     );
   });
 
+  // How Atlaskit ships its packages.
+  const packageWithRules = {
+    'node_modules/ext-lib/package.json': `{ "name": "ext-lib", "type": "module", "main": "index.js" }`,
+    'node_modules/ext-lib/index.js': `import './index.compiled.css';\nexport const Ext = () => null;`,
+    'node_modules/ext-lib/index.compiled.css': '._30l3bf54:hover{color:green}._syaz5scu{color:red}',
+  };
+
+  it('holds the rules of the .compiled.css files packages ship, in place of their own CSS', async () => {
+    const root = await fixture({
+      ...packageWithRules,
+      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
+      'src/main.jsx': `
+        export const Card = () => <p css={{ color: 'red', '@media (min-width: 600px)': { color: 'blue' } }} />;
+        import('./About.jsx');
+      `,
+      'src/About.jsx': `import { Ext } from 'ext-lib';\nexport const About = () => <Ext />;`,
+    });
+    const { output } = await build({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [compiled()],
+      build: { write: false, rollupOptions: { external: [/^react/, /^@compiled\/react/] } },
+    });
+    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
+    assert.deepEqual(
+      sheets.map(({ source }) => source),
+      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
+    );
+  });
+
+  it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {
+    const fixture = await serve(packageWithRules);
+    const { client } = fixture.server.environments;
+    const ext = await client.transformRequest('/node_modules/ext-lib/index.js');
+    const script = ext.code.match(/import "(\/@id\/__x00__[^"]+)"/)[1].replace('/@id/__x00__', '\0');
+    assert.match(script, /index\.compiled\.css\.js$/);
+    const stylesheet = async () => {
+      assert.ok(stylesheetImport((await client.transformRequest(script)).code));
+      return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
+    };
+    assert.equal(await stylesheet(), '._syaz5scu{color:red}._30l3bf54:hover{color:green}');
+    await edit(fixture, 'node_modules/ext-lib/index.compiled.css', '._syazbf54{color:green}');
+    await eventually(stylesheet, /\._syazbf54\{color:green\}/);
+  });
+
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
     const buildLibrary = async (files, lib, { build: buildOptions, ...config } = {}) => {
       const [{ output }] = await build({

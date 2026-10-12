@@ -66,6 +66,11 @@ const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
 // in `.module.css` for a CSS module.
 const moduleStylesheetId = (file: string) => `${file}.css?vite-plugin-compiled-react`;
 const moduleStylesheetIdRE = /\.css\?vite-plugin-compiled-react$/;
+// Packages ship their rules already extracted, in `.compiled.css` files their modules import. Each
+// of these imports gets a script, so its rules go into the stylesheet with the others.
+const packageStylesheetRE = /\.compiled\.css$/;
+const packageStylesheetScriptId = (file: string) => `\0vite-plugin-compiled-react:${file}.js`;
+const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+)\.js$/;
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -92,6 +97,11 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
     sort([...new Set(sheetRules)].sort().join(''));
   const processStylesheet = async (config: ResolvedConfig) =>
     (await preprocessCSS(stylesheet(), path.join(config.root, stylesheetName), config)).code;
+  const addRules = (newRules: Iterable<string>) => {
+    const ruleCount = rules.size;
+    for (const rule of newRules) rules.add(rule);
+    if (server && rules.size > ruleCount) refreshStylesheet(server);
+  };
 
   const plugin: Plugin = {
     name: 'vite-plugin-compiled-react',
@@ -116,17 +126,51 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
       server = devServer;
     },
     resolveId: {
-      filter: { id: [/^virtual:vite-plugin-compiled-react\.css$/, moduleStylesheetIdRE] },
-      handler(id) {
+      filter: {
+        id: [
+          /^virtual:vite-plugin-compiled-react\.css$/,
+          moduleStylesheetIdRE,
+          packageStylesheetRE,
+        ],
+      },
+      async handler(id, importer, resolveOptions) {
         if (moduleStylesheetIdRE.test(id)) return id;
+        if (packageStylesheetRE.test(id)) {
+          // Libraries, and Compiled's runtime, leave them to Vite like any other CSS.
+          const { config } = this.environment;
+          if (config.build.lib || !(extract || isReactServer(this.environment))) return;
+          const resolved = await this.resolve(id, importer, { ...resolveOptions, skipSelf: true });
+          return resolved && !resolved.external
+            ? packageStylesheetScriptId(resolved.id)
+            : resolved;
+        }
         return server && this.environment.config.consumer === 'client'
           ? '\0' + browserStylesheetId
           : '\0' + id;
       },
     },
     load: {
-      filter: { id: [stylesheetRE, browserStylesheetRE, moduleStylesheetIdRE, styleCacheRE] },
+      filter: {
+        id: [
+          stylesheetRE,
+          browserStylesheetRE,
+          moduleStylesheetIdRE,
+          packageStylesheetScriptRE,
+          styleCacheRE,
+        ],
+      },
       async handler(id) {
+        const packageStylesheet = id.match(packageStylesheetScriptRE)?.[1];
+        if (packageStylesheet) {
+          this.addWatchFile(packageStylesheet);
+          if (server) addDependent(packageStylesheet, id);
+          addRules([await readFile(packageStylesheet, 'utf8')]);
+          // A build links the stylesheet on every page.
+          return server
+            ? `import ${JSON.stringify(stylesheetId)};
+if (import.meta.hot) import.meta.hot.accept();`
+            : '';
+        }
         if (styleCacheRE.test(id)) {
           return isReactServer(this.environment)
             ? `export default {};
@@ -210,9 +254,7 @@ import.meta.hot.accept();`;
         });
         if (!result?.code) return;
         const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
-        const ruleCount = rules.size;
-        for (const rule of styleRules) rules.add(rule);
-        if (server && rules.size > ruleCount) refreshStylesheet(server);
+        addRules(styleRules);
         let output = result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
           const sheet = moduleStylesheetId(file);
