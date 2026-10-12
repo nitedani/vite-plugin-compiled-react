@@ -93,6 +93,9 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // Vite puts the CSS of its chunk. Vite has no hook to sort a chunk's CSS before minifying it, so
   // the rules of different modules keep the order Vite puts their modules in.
   const moduleRules = new Map<string, string[]>();
+  // The .compiled.css files Vite resolved: browsers can request a package stylesheet's script for
+  // any file, but only these are read.
+  const packageStylesheets = new Set<string>();
   // Compiled reads values from the modules a module imports, so each of those files maps to the
   // modules whose output it is part of.
   const dependents = new Map<string, Set<string>>();
@@ -147,9 +150,17 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           const { config } = this.environment;
           if (config.build.lib || !(extract || isReactServer(this.environment))) return;
           const resolved = await this.resolve(id, importer, { ...resolveOptions, skipSelf: true });
-          return resolved && !resolved.external
-            ? packageStylesheetScriptId(resolved.id)
-            : resolved;
+          if (!resolved || resolved.external) return resolved;
+          // Left to Vite, which refuses the file to browsers.
+          if (
+            server &&
+            config.consumer === 'client' &&
+            !isFileLoadingAllowed(server.config, resolved.id)
+          ) {
+            return;
+          }
+          packageStylesheets.add(resolved.id);
+          return packageStylesheetScriptId(resolved.id);
         }
         return server && this.environment.config.consumer === 'client'
           ? '\0' + browserStylesheetId
@@ -169,14 +180,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
       async handler(id) {
         const packageStylesheet = id.match(packageStylesheetScriptRE)?.[1];
         if (packageStylesheet) {
-          // Browsers can request this module for any file.
-          if (
-            server &&
-            this.environment.config.consumer === 'client' &&
-            !isFileLoadingAllowed(server.config, packageStylesheet)
-          ) {
-            return;
-          }
+          if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
           // The stylesheet is one file: relative URLs get the directory of the package's file.

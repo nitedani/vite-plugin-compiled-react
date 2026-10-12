@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
@@ -241,14 +241,16 @@ describe('the stylesheet', () => {
       'secret.compiled.css': '._secret{color:red}',
       'secret.txt': '._secret{color:red}',
     });
-    const { server } = await serve({}, root => ({
+    const { root, server } = await serve({}, root => ({
       server: { middlewareMode: true, ws: false, fs: { strict: true, allow: [root] } },
     }));
     const { client } = server.environments;
-    // URLs a browser can request.
+    // URLs a browser can request, decoded.
     for (const url of [
       `/@fs${outside}/secret.compiled.css`,
+      `/@fs${root}/../${basename(outside)}/secret.compiled.css`,
       `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.compiled.css.js`,
+      `/@id/__x00__vite-plugin-compiled-react:${root}/../${basename(outside)}/secret.compiled.css.js`,
       `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.txt.js`,
     ]) {
       await assert.rejects(client.transformRequest(url), url);
