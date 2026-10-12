@@ -11,6 +11,7 @@ import enhancedResolve from 'enhanced-resolve';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  isFileLoadingAllowed,
   normalizePath,
   preprocessCSS,
   type Environment,
@@ -70,7 +71,7 @@ const moduleStylesheetIdRE = /\.css\?vite-plugin-compiled-react$/;
 // of these imports gets a script, so its rules go into the stylesheet with the others.
 const packageStylesheetRE = /\.compiled\.css$/;
 const packageStylesheetScriptId = (file: string) => `\0vite-plugin-compiled-react:${file}.js`;
-const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+)\.js$/;
+const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+\.compiled\.css)\.js$/;
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
@@ -162,6 +163,14 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
       async handler(id) {
         const packageStylesheet = id.match(packageStylesheetScriptRE)?.[1];
         if (packageStylesheet) {
+          // Browsers can request this module for any file.
+          if (
+            server &&
+            this.environment.config.consumer === 'client' &&
+            !isFileLoadingAllowed(server.config, packageStylesheet)
+          ) {
+            return;
+          }
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
           addRules([await readFile(packageStylesheet, 'utf8')]);

@@ -196,6 +196,27 @@ describe('the stylesheet', () => {
     await eventually(stylesheet, /\._syazbf54\{color:green\}/);
   });
 
+  it("doesn't take the rules of a file that Vite doesn't serve to browsers", async () => {
+    const outside = await fixture({
+      'secret.compiled.css': '._secret{color:red}',
+      'secret.txt': '._secret{color:red}',
+    });
+    const { server } = await serve({}, root => ({
+      server: { middlewareMode: true, ws: false, fs: { strict: true, allow: [root] } },
+    }));
+    const { client } = server.environments;
+    // URLs a browser can request.
+    for (const url of [
+      `/@fs${outside}/secret.compiled.css`,
+      `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.compiled.css.js`,
+      `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.txt.js`,
+    ]) {
+      await assert.rejects(client.transformRequest(url), url);
+    }
+    const sheet = await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct');
+    assert.doesNotMatch(sheet.code, /_secret/);
+  });
+
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
     const buildLibrary = async (files, lib, { build: buildOptions, ...config } = {}) => {
       const [{ output }] = await build({
