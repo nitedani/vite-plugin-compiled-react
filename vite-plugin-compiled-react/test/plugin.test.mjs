@@ -233,7 +233,7 @@ describe('the stylesheet', () => {
     };
     assert.equal(await stylesheet(), '._syaz5scu{color:red}._30l3bf54:hover{color:green}');
     await edit(fixture, 'node_modules/ext-lib/index.compiled.css', '._syazbf54{color:green}');
-    await eventually(stylesheet, /\._syazbf54\{color:green\}/);
+    await eventually(stylesheet, /^\._syazbf54\{color:green\}$/);
   });
 
   it("doesn't take the rules of a file that Vite doesn't serve to browsers", async () => {
@@ -442,6 +442,28 @@ describe('the stylesheet', () => {
     const page = browserPage();
     await page.run(newer);
     await page.run(older);
+    assert.equal(
+      page.document.querySelector('style').textContent,
+      '._syaz5scu{color:red}._syazbf54{color:green}',
+    );
+  });
+
+  it("replaces a module's rules in dev when it changes, in pages too, keeping the rules other modules have", async () => {
+    const fixture = await serve({
+      'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
+      'src/Card.jsx': `export const Card = () => <p css={{ color: 'blue' }} />;`,
+    });
+    await fixture.transform('src/Banner.jsx');
+    const older = await fixture.script(await fixture.transform('src/Card.jsx'));
+    // As many rules as before: one goes, one comes.
+    await edit(fixture, 'src/Card.jsx', `export const Card = () => <p css={{ color: 'red' }} />;`);
+    const newer = await eventually(
+      async () => fixture.script(await fixture.transform('src/Card.jsx')),
+      /color:red/,
+    );
+    const page = browserPage();
+    await page.run(older);
+    await page.run(newer);
     assert.equal(
       page.document.querySelector('style').textContent,
       '._syaz5scu{color:red}._syazbf54{color:green}',

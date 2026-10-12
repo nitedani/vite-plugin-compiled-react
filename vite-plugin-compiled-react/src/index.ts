@@ -81,8 +81,10 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let resolver: Resolver;
   let server: ViteDevServer | undefined;
   // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
-  // all extracted rules go into one stylesheet.
-  const rules = new Set<string>();
+  // all extracted rules go into one stylesheet. A module compiled again replaces its rules.
+  const rules = new Map<string, string[]>();
+  // Counts the changes of the rules: pages keep the stylesheet of the newest.
+  let revision = 0;
   // In a library, each module with rules imports a stylesheet of its own, so its rules go wherever
   // Vite puts the CSS of its chunk. Vite has no hook to sort a chunk's CSS before minifying it, so
   // the rules of different modules keep the order Vite puts their modules in.
@@ -94,12 +96,14 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
     dependents.set(file, (dependents.get(file) ?? new Set()).add(id));
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
-  const stylesheet = (sheetRules: Iterable<string> = rules) =>
+  const stylesheet = (sheetRules: Iterable<string> = new Set([...rules.values()].flat())) =>
     sort([...sheetRules].sort().join(''));
-  const addRules = (newRules: Iterable<string>) => {
-    const ruleCount = rules.size;
-    for (const rule of newRules) rules.add(rule);
-    if (server && rules.size > ruleCount) refreshStylesheet(server);
+  const setRules = (id: string, newRules: string[]) => {
+    if (JSON.stringify(rules.get(id) ?? []) === JSON.stringify(newRules)) return;
+    if (newRules.length) rules.set(id, newRules);
+    else rules.delete(id);
+    revision++;
+    if (server) refreshStylesheet(server);
   };
 
   return {
@@ -189,7 +193,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
             /url\((\s*['"]?)(?![a-z][a-z\d+.-]*:|[/#])/gi,
             `url($1${path.dirname(packageStylesheet)}/`,
           );
-          addRules([css]);
+          setRules(id, [css]);
           // A build links the stylesheet on every page.
           return server
             ? `import ${JSON.stringify(stylesheetId)};
@@ -210,17 +214,17 @@ export const useCache = () => {
           return stylesheet();
         }
         if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
-        const version = rules.size;
+        const version = revision;
         const { code } = (await (this.environment as DevEnvironment).transformRequest(
           `\0${stylesheetId}?direct`,
         ))!;
-        // A page can run an older version after a newer one: the version with more rules wins.
+        // A page can run an older version after a newer one: the newest revision wins.
         // A page can also link the stylesheet more than once, for example from server-rendered HTML
         // and from a React Server Components payload, and Vite's hot update replaces one link only:
         // the newest version goes after every link, so their older rules don't override it.
         return `import { updateStyle } from '/@vite/client';
-if (!(import.meta.hot.data.rules >= ${version})) {
-  import.meta.hot.data.rules = ${version};
+if (!(import.meta.hot.data.revision >= ${version})) {
+  import.meta.hot.data.revision = ${version};
   updateStyle(${JSON.stringify('\0' + stylesheetId)}, ${JSON.stringify(code)});
   const sheets = [...document.querySelectorAll('link[rel="stylesheet"], style')];
   const style = sheets.find(sheet => sheet.dataset.viteDevId === ${JSON.stringify('\0' + stylesheetId)});
@@ -296,7 +300,7 @@ import.meta.hot.accept();`;
             }
           }
         }
-        addRules(styleRules);
+        setRules(id, styleRules);
         let output = result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
           const sheet = moduleStylesheetId(file);
@@ -463,7 +467,7 @@ function importStylesheet({ types: t }: typeof babel): PluginObj {
   };
 }
 
-// The stylesheet is out of date in every environment once a module adds rules. Its new URL makes
+// The stylesheet is out of date in every environment once the rules change. Its new URL makes
 // the browser fetch it before running that module, and every module transformed afterwards. Pages
 // that already loaded it, as a script or a <link>, get it as a hot update.
 function refreshStylesheet(server: ViteDevServer) {
