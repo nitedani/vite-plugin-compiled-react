@@ -255,6 +255,8 @@ import.meta.hot.accept();`;
         const { styleRules = [] } = result.metadata as unknown as BabelFileMetadata;
         // In dev, a module with rules depends on the files its styles can read values from:
         // Compiled reports some, and TypeScript drops the imports of the values it inlined.
+        // TODO: rely on Compiled's report once https://github.com/atlassian-labs/compiled/issues/1960 is fixed
+        // (it misses imported objects, destructured imports and values passed through another module).
         if (server) {
           const compiledRules = extractStyles ? styleRules : await findRules(result.ast!, file);
           if (compiledRules.length) {
