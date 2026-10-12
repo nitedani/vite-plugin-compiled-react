@@ -411,12 +411,17 @@ describe('the stylesheet', () => {
     });
     const { client, ssr } = server.environments;
     await client.transformRequest(stylesheetImport(await transform('src/Banner.jsx')));
+    // As the server-rendered HTML links it.
+    await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct');
     const sent = [];
     client.hot.send = payload => sent.push(payload);
     await ssr.transformRequest('/src/Card.jsx');
     assert.deepEqual(
       sent.flatMap(({ updates }) => updates.map(({ type, path }) => [type, path])),
-      [['js-update', '/@id/__x00__virtual:vite-plugin-compiled-react.js']],
+      [
+        ['css-update', '/@id/__x00__virtual:vite-plugin-compiled-react.css'],
+        ['js-update', '/@id/__x00__virtual:vite-plugin-compiled-react.js'],
+      ],
     );
   });
 });
