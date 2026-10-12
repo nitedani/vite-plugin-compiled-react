@@ -12,7 +12,7 @@ import postcss from 'postcss';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
 import { statSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   isFileLoadingAllowed,
@@ -521,25 +521,32 @@ function ownClass(rule: postcss.Rule) {
 // The names Compiled gives the keyframes() calls of a module and of the modules its values come
 // from: `k` and the hash of the call's code.
 async function compiledKeyframes(code: string, file: string, sources: Iterable<string>) {
-  const names = new Set<string>();
-  const modules = await Promise.all(
-    [...sources]
-      .filter(source => /\.[cm]?[jt]sx?$/.test(source))
-      .map(async source => [source, await readFile(source, 'utf8')] as const),
-  );
-  for (const [module, text] of [[file, code] as const, ...modules]) {
-    const ast = await parse(text, module).catch(() => undefined);
-    if (!ast) continue;
-    const add = (callee: babel.NodePath, call: babel.types.Expression) => {
-      if (callee.referencesImport('@compiled/react', 'keyframes')) {
-        names.add(`k${hash(generator.default(call).code)}`);
-      }
-    };
-    babel.traverse(ast, {
-      CallExpression: call => add(call.get('callee'), call.node),
-      TaggedTemplateExpression: call => add(call.get('tag'), call.node),
-    });
-  }
+  const names = await Promise.all([
+    keyframesNames(code, file),
+    ...[...sources].filter(source => /\.[cm]?[jt]sx?$/.test(source)).map(sourceKeyframes),
+  ]);
+  return new Set(names.flat());
+}
+
+function sourceKeyframes(file: string) {
+  return (cachedModule(file).keyframes ??= readFile(file, 'utf8').then(code =>
+    keyframesNames(code, file),
+  ));
+}
+
+async function keyframesNames(code: string, file: string) {
+  const names: string[] = [];
+  const ast = await parse(code, file).catch(() => undefined);
+  if (!ast) return names;
+  const add = (callee: babel.NodePath, call: babel.types.Expression) => {
+    if (callee.referencesImport('@compiled/react', 'keyframes')) {
+      names.push(`k${hash(generator.default(call).code)}`);
+    }
+  };
+  babel.traverse(ast, {
+    CallExpression: call => add(call.get('callee'), call.node),
+    TaggedTemplateExpression: call => add(call.get('tag'), call.node),
+  });
   return names;
 }
 
@@ -635,30 +642,37 @@ async function valueSources(resolver: Resolver, file: string, requests: string[]
   return sources;
 }
 
-// Parsed once per change of the file.
-const valueImportsCache = new Map<string, { mtimeMs: number; requests: string[] }>();
+// What's read from each module, once per change of the file, by the first module that needs it.
+const moduleCache = new Map<
+  string,
+  { mtimeMs: number; imports?: Promise<string[]>; keyframes?: Promise<string[]> }
+>();
+
+function cachedModule(file: string) {
+  const { mtimeMs } = statSync(file);
+  let cached = moduleCache.get(file);
+  if (cached?.mtimeMs !== mtimeMs) moduleCache.set(file, (cached = { mtimeMs }));
+  return cached;
+}
 
 // The modules a file's exported values can come from: its re-exports, and all its imports unless
 // it's a component (.jsx, .tsx), which would make its importers depend on the whole tree below it.
 async function valueImports(file: string) {
   if (!/\.[cm]?[jt]sx?$/.test(file)) return [];
-  const { mtimeMs } = await stat(file);
-  const cached = valueImportsCache.get(file);
-  if (cached?.mtimeMs === mtimeMs) return cached.requests;
   const isComponent = /\.[jt]sx$/.test(file);
-  const requests = await parse(await readFile(file, 'utf8'), file).then(
-    ast =>
-      ast.program.body.flatMap(node =>
-        (node.type === 'ImportDeclaration' && !isComponent) ||
-        node.type === 'ExportNamedDeclaration' ||
-        node.type === 'ExportAllDeclaration'
-          ? (node.source?.value ?? [])
-          : [],
-      ),
-    () => [],
-  );
-  valueImportsCache.set(file, { mtimeMs, requests });
-  return requests;
+  return (cachedModule(file).imports ??= readFile(file, 'utf8')
+    .then(code => parse(code, file))
+    .then(
+      ast =>
+        ast.program.body.flatMap(node =>
+          (node.type === 'ImportDeclaration' && !isComponent) ||
+          node.type === 'ExportNamedDeclaration' ||
+          node.type === 'ExportAllDeclaration'
+            ? (node.source?.value ?? [])
+            : [],
+        ),
+      () => [],
+    ));
 }
 
 // The rules strip-runtime would extract from a module's output. It changes the AST, which the

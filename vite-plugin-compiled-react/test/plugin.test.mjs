@@ -347,6 +347,39 @@ export const slide = keyframes({ to: { borderImageSource: 'url(./icon.svg)' } })
     );
   });
 
+  it('builds keyframes with URLs about as fast as without, with values read through a large barrel', async () => {
+    // The modules values come from are each read once, not once per component using them.
+    const build = async image => {
+      const files = { 'index.html': `<script type="module" src="/main.jsx"></script>` };
+      for (let module = 0; module < 100; module++) {
+        files[`tokens/t${module}.js`] = Array.from(
+          { length: 40 },
+          (_, token) => `export const t${module}_${token} = '#${String(module * 40 + token).padStart(6, '0')}';`,
+        ).join('\n');
+      }
+      files['tokens/index.js'] = Object.keys(files)
+        .filter(file => file.startsWith('tokens/'))
+        .map(file => `export * from './${basename(file)}';`)
+        .join('\n');
+      const components = Array.from({ length: 30 }, (_, component) => `c${component}/C.jsx`);
+      for (const [component, file] of components.entries()) {
+        files[file] = `import { keyframes } from '@compiled/react';
+import { t0_${component} } from '../tokens/index.js';
+const fade = keyframes({ from: { backgroundImage: '${image}' }, to: { opacity: ${component} } });
+export const C = () => <i css={{ animationName: fade, color: t0_${component} }} />;`;
+        files[file.replace('C.jsx', 'icon.svg')] = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+      }
+      files['main.jsx'] = components.map(file => `import('./${file}');`).join('\n');
+      const root = await fixture(files);
+      const start = performance.now();
+      await bundle(root, { build: { minify: false } });
+      return performance.now() - start;
+    };
+    const plain = await build('none');
+    const urls = await build('url(./icon.svg)');
+    assert.ok(urls < 3 * plain, `${urls} ms with URLs, ${plain} ms without`);
+  });
+
   it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {
     const fixture = await serve(packageWithRules);
     const { client } = fixture.server.environments;
