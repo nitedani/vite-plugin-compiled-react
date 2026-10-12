@@ -94,7 +94,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
   const stylesheet = (sheetRules: Iterable<string> = rules) =>
-    sort([...new Set(sheetRules)].sort().join(''));
+    sort([...sheetRules].sort().join(''));
   const processStylesheet = async (config: ResolvedConfig) =>
     (await preprocessCSS(stylesheet(), path.join(config.root, stylesheetName), config)).code;
   const addRules = (newRules: Iterable<string>) => {
