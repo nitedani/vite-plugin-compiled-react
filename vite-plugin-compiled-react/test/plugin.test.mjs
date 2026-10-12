@@ -405,6 +405,7 @@ describe('the stylesheet', () => {
     const builder = await createBuilder({
       root: await fixture({
         'vite.config.js': `
+          import { fileURLToPath } from 'node:url';
           import { compiled } from '../lib/index.js';
           export default {
             logLevel: 'silent',
@@ -414,7 +415,8 @@ describe('the stylesheet', () => {
               rsc: {
                 consumer: 'server',
                 resolve: { conditions: ['react-server'] },
-                build: { rollupOptions: { input: 'src/server.jsx' } },
+                // Rollup resolves a relative input from the working directory.
+                build: { rollupOptions: { input: fileURLToPath(new URL('src/server.jsx', import.meta.url)) } },
               },
             },
           };
