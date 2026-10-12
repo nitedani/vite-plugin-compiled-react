@@ -372,8 +372,9 @@ import.meta.hot.accept();`;
   };
 }
 
-// The stylesheet is one file, so each rule's URLs are resolved from the file the rule is written in,
+// The stylesheet is one file, so each rule's URLs are resolved from the module that uses the rule,
 // as Vite resolves a stylesheet's: a public file stays as it is, and another file becomes its path.
+// Compiled evaluates imported styles in that module and doesn't say where a rule was written.
 async function resolveUrls(
   context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
   css: string,
