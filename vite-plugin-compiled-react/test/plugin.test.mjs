@@ -254,13 +254,13 @@ describe('the stylesheet', () => {
       server: { middlewareMode: true, ws: false, fs: { strict: true, allow: [root] } },
     }));
     const { client } = server.environments;
-    // URLs a browser can request, decoded.
+    // URLs a browser can request, as Vite's middleware passes them on: decoded, /@id/ unwrapped.
     for (const url of [
       `/@fs${outside}/secret.compiled.css`,
       `/@fs${root}/../${basename(outside)}/secret.compiled.css`,
-      `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.compiled.css.js`,
-      `/@id/__x00__vite-plugin-compiled-react:${root}/../${basename(outside)}/secret.compiled.css.js`,
-      `/@id/__x00__vite-plugin-compiled-react:${outside}/secret.txt.js`,
+      `\0vite-plugin-compiled-react:${outside}/secret.compiled.css.js`,
+      `\0vite-plugin-compiled-react:${root}/../${basename(outside)}/secret.compiled.css.js`,
+      `\0vite-plugin-compiled-react:${outside}/secret.txt.js`,
     ]) {
       await assert.rejects(client.transformRequest(url), url);
     }
