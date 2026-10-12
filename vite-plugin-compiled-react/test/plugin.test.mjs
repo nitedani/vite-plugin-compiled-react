@@ -447,19 +447,19 @@ describe('dev', () => {
     assert.ok(!ssr.config.optimizeDeps.include?.includes('@compiled/react/runtime'));
   });
 
-  it('re-compiles a module when a module it read values from changes', async () => {
+  it('re-compiles a module when a module it read values from changes, also through a component', async () => {
     const fixture = await serve({
       'src/palette.ts': `export const red = 'red';`,
-      'src/colors.ts': `import { red } from './palette'; export const color = red;`,
-      'src/Card.jsx': `
-        import { color } from './colors';
+      'src/Theme.tsx': `import { red } from './palette'; export const color = red; export const Theme = () => null;`,
+      'src/Card.tsx': `
+        import { color } from './Theme';
         export const Card = () => <p css={{ color }} />;
       `,
     });
-    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.jsx')), /color:red/);
+    assert.match(await fixture.stylesheet(await fixture.transform('src/Card.tsx')), /color:red/);
     await edit(fixture, 'src/palette.ts', `export const red = 'blue';`);
     await eventually(
-      async () => fixture.stylesheet(await fixture.transform('src/Card.jsx')),
+      async () => fixture.stylesheet(await fixture.transform('src/Card.tsx')),
       /color:blue/,
     );
   });
