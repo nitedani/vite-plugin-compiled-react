@@ -8,16 +8,17 @@ import stripRuntimeBabelPlugin, {
 import { sort } from '@compiled/css';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
+import { statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   isFileLoadingAllowed,
   type DevEnvironment,
   normalizePath,
+  preprocessCSS,
   type Environment,
   type Plugin,
   type ResolvedConfig,
-  type Rollup,
   type Update,
   type ViteDevServer,
 } from 'vite';
@@ -55,7 +56,8 @@ declare module 'react' {
   }
 }
 
-const stylesheetId = 'virtual:vite-plugin-compiled-react.css';
+const stylesheetName = 'vite-plugin-compiled-react.css';
+const stylesheetId = `virtual:${stylesheetName}`;
 const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
 // Browsers request a virtual module under /@id/, with \0 encoded.
 const browserUrl = (id: string) => `/@id/__x00__${id}`;
@@ -75,6 +77,8 @@ const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+\.compiled\.
 // React Server environments that bundle @compiled/react have no createContext(), which this
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
+// A url() and its URL, quoted or not.
+const cssUrlRE = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s'"()]*))\s*\)/gi;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
@@ -127,19 +131,6 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
     },
     configureServer(devServer) {
       server = devServer;
-    },
-    buildStart() {
-      const { config } = this.environment;
-      // React Server environments build before the client, whose stylesheet has their rules too.
-      if (
-        !server &&
-        extract &&
-        config.build.emitAssets &&
-        !isReactServer(this.environment) &&
-        !config.build.lib
-      ) {
-        this.emitFile({ type: 'chunk', id: stylesheetId, name: 'vite-plugin-compiled-react' });
-      }
     },
     resolveId: {
       filter: {
@@ -208,11 +199,7 @@ export const useCache = () => {
 };`
             : undefined;
         }
-        if (stylesheetRE.test(id)) {
-          // In a build, it waits for every module, which can add rules.
-          if (!server) await loadModuleGraph(this, id);
-          return stylesheet();
-        }
+        if (stylesheetRE.test(id)) return stylesheet();
         if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
         const version = revision;
         const { code } = (await (this.environment as DevEnvironment).transformRequest(
@@ -311,14 +298,48 @@ import.meta.hot.accept();`;
         return { code: output, map: result.map };
       },
     },
-    generateBundle(_, bundle) {
-      const chunks = Object.values(bundle).filter(chunk => chunk.type === 'chunk');
-      const sheet = chunks.find(chunk => chunk.moduleIds.includes('\0' + stylesheetId));
-      if (!sheet) return;
+    // Emitted once every module is compiled, which a module of the build can't wait for.
+    async generateBundle(_, bundle) {
+      const { config } = this.environment;
+      // React Server environments build before the client, whose stylesheet has their rules too.
+      if (
+        !rules.size ||
+        !config.build.emitAssets ||
+        isReactServer(this.environment) ||
+        config.build.lib
+      ) {
+        return;
+      }
+      const { code } = await preprocessCSS(
+        stylesheet(),
+        path.join(config.root, stylesheetName),
+        config,
+      );
+      // Vite resolves the URLs of its modules' CSS only: a public file gets the base, and another
+      // file is emitted.
+      const source = await replaceUrls(code, async url => {
+        const [, file, suffix] = url.match(/^(\/(?!\/)[^?#]*)(.*)$/s) ?? [];
+        if (!file) return;
+        if (config.publicDir && isFile(path.join(config.publicDir, file))) {
+          return config.base + file.slice(1) + suffix;
+        }
+        const asset = [path.join(config.root, file), file].find(isFile);
+        if (!asset) return;
+        const reference = this.emitFile({
+          type: 'asset',
+          name: path.basename(asset),
+          source: await readFile(asset),
+        });
+        return config.base + this.getFileName(reference) + suffix;
+      });
+      const fileName = this.getFileName(
+        this.emitFile({ type: 'asset', name: stylesheetName, source }),
+      );
       // Every page links it: HTML and manifest-based frameworks link the CSS of their entry chunks.
-      for (const chunk of chunks) {
-        if (!chunk.isEntry) continue;
-        for (const css of sheet.viteMetadata!.importedCss) chunk.viteMetadata!.importedCss.add(css);
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type === 'chunk' && chunk.isEntry) {
+          chunk.viteMetadata!.importedCss.add(fileName);
+        }
       }
     },
     hotUpdate({ file, modules }) {
@@ -333,23 +354,21 @@ import.meta.hot.accept();`;
   };
 }
 
-// Loads the modules of a build, and the modules they import, but the one loading.
-async function loadModuleGraph(context: Rollup.PluginContext, loading: string) {
-  const loaded = new Set([loading]);
-  for (;;) {
-    const ids = [...context.getModuleIds()].filter(id => !loaded.has(id));
-    if (!ids.length) return;
-    for (const id of ids) loaded.add(id);
-    await Promise.all(
-      ids.map(async id => {
-        // Rolldown never finishes loading an external module.
-        const { importers, dynamicImporters } = context.getModuleInfo(id)!;
-        const resolved = await context.resolve(id, importers[0] ?? dynamicImporters[0]);
-        if (!resolved?.external) await context.load({ id, resolveDependencies: true });
-      }),
-    );
-  }
+// Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
+async function replaceUrls(
+  css: string,
+  replace: (url: string) => string | undefined | Promise<string | undefined>,
+) {
+  const urls = await Promise.all(
+    [...css.matchAll(cssUrlRE)].map(([, ...url]) => replace(url.find(part => part != null)!)),
+  );
+  return css.replace(cssUrlRE, match => {
+    const url = urls.shift();
+    return url === undefined ? match : `url(${JSON.stringify(url)})`;
+  });
 }
+
+const isFile = (file: string) => !!statSync(file, { throwIfNoEntry: false })?.isFile();
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it
 // would reject `<string>value` type assertions.

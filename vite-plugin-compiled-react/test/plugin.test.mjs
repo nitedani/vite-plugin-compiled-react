@@ -146,7 +146,7 @@ describe('the stylesheet', () => {
     const sheet = output.find(({ fileName }) => fileName === links[0][1]).source;
     assert.equal(
       sheet,
-      '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (width>=600px){._10s713q2{color:#00f}}\n',
+      '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
     );
   });
 
@@ -177,7 +177,7 @@ describe('the stylesheet', () => {
     const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
     assert.deepEqual(
       sheets.map(({ source }) => source),
-      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (width>=600px){._10s713q2{color:#00f}}\n'],
+      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
     );
   });
 
@@ -208,8 +208,8 @@ describe('the stylesheet', () => {
     const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
     assert.ok(icon);
     const [sheet] = output.filter(({ fileName }) => fileName.endsWith('.css'));
-    assert.match(sheet.source, /url\(\/app\/logo\.svg\)/);
-    assert.match(sheet.source, new RegExp(`url\\(/app/${icon.fileName}\\)`));
+    assert.match(sheet.source, /url\("\/app\/logo\.svg"\)/);
+    assert.match(sheet.source, new RegExp(`url\\("/app/${icon.fileName}"\\)`));
 
     const { server, transform, script } = await serve(urls, { base: '/app/' });
     const icons = await transform('node_modules/ext-icons/index.js');
@@ -430,7 +430,7 @@ describe('the stylesheet', () => {
     const { output } = await builder.build(builder.environments.client);
     assert.deepEqual(
       output.filter(({ fileName }) => fileName.endsWith('.css')).map(({ source }) => source),
-      ['._syaz5scu{color:red}._syazbf54{color:green}\n'],
+      ['._syaz5scu{color:red}._syazbf54{color:green}'],
     );
   });
 
