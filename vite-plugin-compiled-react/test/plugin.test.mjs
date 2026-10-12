@@ -32,6 +32,8 @@ export const Card = ({ children }: Props) => (
     assert.equal(await stylesheet(code), '._syaz5scu{color:red}');
     // React's dev runtime gets the line of <section>.
     assert.match(code, /lineNumber: 4,/);
+    // Frameworks import some modules with a query.
+    assert.match(await transform('src/Card.tsx?x'), /className: ax\(\["_syaz5scu"\]\)/);
   });
 
   it('reads values from imported modules, through string aliases and from the root', async () => {
