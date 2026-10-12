@@ -323,7 +323,8 @@ import.meta.hot.accept();`;
       // Vite resolves the URLs of its modules' CSS only: a public file gets the base, and another
       // file is emitted.
       const source = await replaceUrls(code, async url => {
-        const [, file, suffix] = url.match(/^(\/(?!\/)[^?#]*)(.*)$/s) ?? [];
+        // A path from the root, or from a package's relative URL, on Windows too.
+        const [, file, suffix] = url.match(/^((?:\/(?!\/)|[a-z]:\/)[^?#]*)(.*)$/is) ?? [];
         if (!file) return;
         if (config.publicDir && isFile(path.join(config.publicDir, file))) {
           return config.base + file.slice(1) + suffix;
