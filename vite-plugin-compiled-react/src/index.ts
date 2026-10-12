@@ -428,13 +428,17 @@ async function resolveRules(
 ) {
   const resolved = await Promise.all(rules.map(rule => resolveUrls(context, rule, file)));
   if (resolved.every(({ css }, index) => css === rules[index])) return { rules, renamed: false };
-  // Compiled puts each keyframes() call in a rule of its own.
+  // Compiled puts each keyframes() call in a rule of its own, inside the at-rules of the styles
+  // using it.
   const keyframes = new Map<string, string>();
   let generated: Set<string> | undefined;
   for (const [index, { css, portable }] of resolved.entries()) {
-    const name = css !== rules[index] && css.match(/^@keyframes ([^\s{]+)\{/)?.[1];
-    if (name && (generated ??= await generatedKeyframes()).has(name)) {
-      keyframes.set(name, `k${hash(portable)}`);
+    if (css === rules[index]) continue;
+    const [sheet, hashed] = [css, portable].map(keyframesRules);
+    for (const [ruleIndex, { params: name }] of sheet.entries()) {
+      if ((generated ??= await generatedKeyframes()).has(name)) {
+        keyframes.set(name, `k${hash(hashed[ruleIndex].toString())}`);
+      }
     }
   }
   const classNames = new Map<string, string>();
@@ -481,6 +485,15 @@ function styleRules(root: postcss.Root) {
     if (!(parent?.type === 'atrule' && /keyframes$/.test((parent as postcss.AtRule).name))) {
       rules.push(rule);
     }
+  });
+  return rules;
+}
+
+// The @keyframes rules of a stylesheet, at any depth.
+function keyframesRules(css: string) {
+  const rules: postcss.AtRule[] = [];
+  postcss.parse(css).walkAtRules('keyframes', rule => {
+    rules.push(rule);
   });
   return rules;
 }

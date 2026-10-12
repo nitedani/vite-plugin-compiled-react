@@ -255,6 +255,7 @@ export const Logo = () => <p css={{
 import { name, label } from '/tokens.js';
 import { slide } from '/slide.js';
 const fade = keyframes({ to: { backgroundImage: 'url(./icon.svg)' } });
+const pulse = keyframes({ to: { listStyleImage: 'url(./icon.svg)' } });
 export const Icon = () => <i data-label="_1itk1mit" title="k1gurkcx" css={{
   backgroundImage: 'url(./icon.svg)',
   animationName: fade,
@@ -263,6 +264,7 @@ export const Icon = () => <i data-label="_1itk1mit" title="k1gurkcx" css={{
   '& ._1itk1mit': { maskImage: 'url(./icon.svg)' },
   ['@keyframes ' + name]: { to: { backgroundImage: 'url(./icon.svg)' } },
   '::before': { content: label },
+  '@media (min-width: 1px)': { animation: \`\${pulse} 1s\` },
 }} />;`;
     // The root is `app`, and `c` takes its image from a folder beside it.
     const files = {
@@ -327,6 +329,8 @@ export const slide = keyframes({ to: { borderImageSource: 'url(./icon.svg)' } })
     assert.deepEqual(new Set(css.match(/content:"\w+"/g)), new Set(['content:"k1fhct6v"']));
     // Keyframes from another module resolve their URLs in each module using them.
     assert.equal(new Set(css.match(/(?<=@keyframes )\w+(?=\{to\{border-image-source)/g)).size, 3, css);
+    // Compiled puts the keyframes of an animation in an at-rule inside that at-rule.
+    assert.equal(new Set(css.match(/(?<=@keyframes )\w+(?=\{to\{list-style-image)/g)).size, 3, css);
 
     // In another checkout, deeper, with Vite inlining the small files.
     const { transform, sheet } = await serve(
