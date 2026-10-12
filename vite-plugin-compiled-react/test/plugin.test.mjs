@@ -333,7 +333,7 @@ describe('the stylesheet', () => {
     assert.notDeepEqual(Object.keys(blue), Object.keys(red));
   });
 
-  it("goes into a library's stylesheet when Vite's app builder builds it", async () => {
+  it("has the rules of React Server environments in a build's client stylesheet", async () => {
     // The app builder loads the config file again for each environment it builds.
     const builder = await createBuilder({
       root: await fixture({
@@ -342,20 +342,26 @@ describe('the stylesheet', () => {
           export default {
             logLevel: 'silent',
             plugins: [compiled()],
-            build: {
-              write: false,
-              lib: { entry: 'src/index.jsx', formats: ['es'], fileName: 'my-lib' },
-              rollupOptions: { external: [/^react/, /^@compiled\\/react/] },
+            build: { write: false, rollupOptions: { external: [/^react/, /^@compiled\\/react/] } },
+            environments: {
+              rsc: {
+                consumer: 'server',
+                resolve: { conditions: ['react-server'] },
+                build: { rollupOptions: { input: 'src/server.jsx' } },
+              },
             },
           };
         `,
-        'src/index.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+        'index.html': `<script type="module" src="/src/main.jsx"></script>`,
+        'src/main.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
+        'src/server.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
       }),
     });
-    const [{ output }] = await builder.build(builder.environments.client);
-    assert.match(
-      output.find(({ fileName }) => fileName === 'my-lib.css')?.source,
-      /^\._syaz5scu\{color:red\}/,
+    await builder.build(builder.environments.rsc);
+    const { output } = await builder.build(builder.environments.client);
+    assert.deepEqual(
+      output.filter(({ fileName }) => fileName.endsWith('.css')).map(({ source }) => source),
+      ['._syaz5scu{color:red}._syazbf54{color:green}'],
     );
   });
 
