@@ -133,13 +133,7 @@ describe('the stylesheet', () => {
       `,
       'src/About.jsx': `export const About = () => <p css={{ color: 'red', ':hover': { color: 'green' } }} />;`,
     });
-    const { output } = await build({
-      root,
-      configFile: false,
-      logLevel: 'silent',
-      plugins: [compiled()],
-      build: { write: false, rollupOptions: { external: [/^react/, /^@compiled\/react/] } },
-    });
+    const output = await bundle(root);
     const html = output.find(({ fileName }) => fileName === 'index.html').source;
     const links = [...html.matchAll(/<link rel="stylesheet"[^>]* href="\/([^"]+)"/g)];
     assert.equal(links.length, 1);
@@ -167,13 +161,7 @@ describe('the stylesheet', () => {
       `,
       'src/About.jsx': `import { Ext } from 'ext-lib';\nexport const About = () => <Ext />;`,
     });
-    const { output } = await build({
-      root,
-      configFile: false,
-      logLevel: 'silent',
-      plugins: [compiled()],
-      build: { write: false, rollupOptions: { external: [/^react/, /^@compiled\/react/] } },
-    });
+    const output = await bundle(root);
     const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
     assert.deepEqual(
       sheets.map(({ source }) => source),
@@ -202,17 +190,9 @@ describe('the stylesheet', () => {
     );
     // The files the stylesheet's URLs point to, from the root of the output.
     const buildUrls = async (base, assetFileNames) => {
-      const { output } = await build({
-        root,
+      const output = await bundle(root, {
         base,
-        configFile: false,
-        logLevel: 'silent',
-        plugins: [compiled()],
-        build: {
-          write: false,
-          assetsInlineLimit: 0,
-          rollupOptions: { external: [/^react/, /^@compiled\/react/], output: { assetFileNames } },
-        },
+        build: { assetsInlineLimit: 0, rollupOptions: { output: { assetFileNames } } },
       });
       const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
       assert.ok(icon);
@@ -281,34 +261,6 @@ describe('the stylesheet', () => {
   });
 
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
-    const buildLibrary = async (files, lib, { build: buildOptions, ...config } = {}) => {
-      const [{ output }] = await build({
-        root: await fixture(files),
-        configFile: false,
-        logLevel: 'silent',
-        plugins: [compiled()],
-        ...config,
-        build: {
-          ...buildOptions,
-          write: false,
-          lib: { entry: 'src/index.jsx', formats: ['es'], ...lib },
-          rollupOptions: {
-            external: [/^react/, /^@compiled\/react/],
-            // The global variable an `iife` or `umd` library reads each of them from.
-            output: { globals: () => 'external' },
-          },
-        },
-      });
-      // Each stylesheet, and the CSS each `iife` or `umd` chunk inserts.
-      return Object.fromEntries(
-        output.flatMap(({ fileName, source, code }) => {
-          const css = fileName.endsWith('.css')
-            ? source
-            : /\.(iife|umd)\.c?js$/.test(fileName) && insertedStyles(code);
-          return css ? [[fileName, css.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [];
-        }),
-      );
-    };
     const card = `export const Card = () => <p css={{ color: 'red' }} />;`;
     assert.deepEqual(
       await buildLibrary(
@@ -369,37 +321,21 @@ describe('the stylesheet', () => {
   });
 
   it("goes through Vite's CSS pipeline in a library, like the library's own CSS", async () => {
-    const buildLibrary = async (files, config = {}) => {
-      const [{ output }] = await build({
-        root: await fixture(files),
-        configFile: false,
-        logLevel: 'silent',
-        plugins: [compiled()],
+    // With hashed file names.
+    const buildHashedLibrary = (files, config) =>
+      buildLibrary(files, { entry: 'src/index.tsx', fileName: 'my-lib' }, {
         ...config,
-        build: {
-          write: false,
-          lib: { entry: 'src/index.tsx', formats: ['es'], fileName: 'my-lib' },
-          rollupOptions: {
-            external: [/^react/, /^@compiled\/react/],
-            output: { assetFileNames: '[name]-[hash][extname]' },
-          },
-        },
+        build: { rollupOptions: { output: { assetFileNames: '[name]-[hash][extname]' } } },
       });
-      return Object.fromEntries(
-        output.flatMap(({ fileName, source }) =>
-          fileName.endsWith('.css') ? [[fileName, source.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [],
-        ),
-      );
-    };
     const card = color => `export const Card = () => <p css={{ color: '${color}' }} />;`;
     // Not a CSS module, though Vite takes CSS named `*.module.css` for one.
-    const moduleTsx = await buildLibrary({
+    const moduleTsx = await buildHashedLibrary({
       'src/index.tsx': `export * from './Card.module';`,
       'src/Card.module.tsx': card('red'),
     });
     assert.deepEqual(Object.values(moduleTsx), ['._syaz5scu{color:red}']);
     // A PostCSS plugin applies to the rules as it does to the library's own CSS.
-    const prefixed = await buildLibrary(
+    const prefixed = await buildHashedLibrary(
       { 'src/index.tsx': `import './own.css';\n${card('red')}`, 'src/own.css': `.own { color: blue }` },
       {
         css: {
@@ -418,8 +354,8 @@ describe('the stylesheet', () => {
     );
     assert.deepEqual(Object.values(prefixed), ['#root .own{color:#00f}#root ._syaz5scu{color:red}']);
     // The hash in a file name follows its rules.
-    const blue = await buildLibrary({ 'src/index.tsx': card('blue') });
-    const red = await buildLibrary({ 'src/index.tsx': card('red') });
+    const blue = await buildHashedLibrary({ 'src/index.tsx': card('blue') });
+    const red = await buildHashedLibrary({ 'src/index.tsx': card('red') });
     assert.notDeepEqual(Object.keys(blue), Object.keys(red));
   });
 
@@ -764,6 +700,47 @@ function browserPage(head = '') {
 function stylesheetImport(code) {
   const url = code.match(/import "[^"]*\/@id\/__x00__(virtual:vite-plugin-compiled-react\.js[^"]*)"/)?.[1];
   return url && '\0' + url;
+}
+
+// Builds an app, or a library, with Compiled and React left external, in memory.
+async function bundle(root, { build: buildOptions = {}, ...config } = {}) {
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [compiled()],
+    ...config,
+    build: {
+      write: false,
+      ...buildOptions,
+      rollupOptions: { external: [/^react/, /^@compiled\/react/], ...buildOptions.rollupOptions },
+    },
+  });
+  // A library's output comes per format.
+  return (Array.isArray(result) ? result[0] : result).output;
+}
+
+// Each stylesheet of a library, and the CSS each `iife` or `umd` chunk inserts.
+async function buildLibrary(files, lib, { build: buildOptions = {}, ...config } = {}) {
+  const output = await bundle(await fixture(files), {
+    ...config,
+    build: {
+      ...buildOptions,
+      lib: { entry: 'src/index.jsx', formats: ['es'], ...lib },
+      rollupOptions: {
+        // The global variable an `iife` or `umd` library reads each of them from.
+        output: { globals: () => 'external', ...buildOptions.rollupOptions?.output },
+      },
+    },
+  });
+  return Object.fromEntries(
+    output.flatMap(({ fileName, source, code }) => {
+      const css = fileName.endsWith('.css')
+        ? source
+        : /\.(iife|umd)\.c?js$/.test(fileName) && insertedStyles(code);
+      return css ? [[fileName, css.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [];
+    }),
+  );
 }
 
 async function serve(files, config = {}) {
