@@ -75,7 +75,7 @@ const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+)\.js$/;
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 
-export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
+export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
   let resolver: Resolver;
   let server: ViteDevServer | undefined;
@@ -103,7 +103,7 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
     if (server && rules.size > ruleCount) refreshStylesheet(server);
   };
 
-  const plugin: Plugin = {
+  return {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
     // A build's client stylesheet then has the rules of the environments built before it.
@@ -307,8 +307,6 @@ import.meta.hot.accept();`;
       if (dependentModules.length) return [...modules, ...dependentModules];
     },
   };
-
-  return [plugin];
 }
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it

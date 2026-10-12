@@ -59,7 +59,6 @@ compiled({
 
 - Requires Vite 6.3 or later and `@compiled/react` 2. `@vitejs/plugin-react` is no longer a peer dependency: the plugin compiles in its own transform.
 - `extract` defaults to `true`. Pass `extract: false` to keep the runtime.
-- `compiled()` returns `Plugin[]`, which `plugins` accepts as before. Code that types its result as `Plugin` fails with TS2741: type it as `Plugin[]`.
 - Extracted styles go into one stylesheet linked on every page, not a stylesheet per module.
 - The `cache` and `onIncludedFiles` options are removed.
 - The plugin no longer adds `@compiled/react` to `ssr.noExternal`.
