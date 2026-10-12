@@ -230,7 +230,7 @@ describe('the stylesheet', () => {
     assert.match(script, /index\.compiled\.css\.js(?:\?|$)/);
     const stylesheet = async () => {
       assert.ok(stylesheetImport((await client.transformRequest(script)).code));
-      return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
+      return fixture.sheet();
     };
     assert.equal(await stylesheet(), '._syaz5scu{color:red}._30l3bf54:hover{color:green}');
     await edit(fixture, 'node_modules/ext-lib/index.compiled.css', '._syazbf54{color:green}');
@@ -242,7 +242,7 @@ describe('the stylesheet', () => {
       'secret.compiled.css': '._secret{color:red}',
       'secret.txt': '._secret{color:red}',
     });
-    const { root, server } = await serve({}, root => ({
+    const { root, server, sheet } = await serve({}, root => ({
       server: { middlewareMode: true, ws: false, fs: { strict: true, allow: [root] } },
     }));
     const { client } = server.environments;
@@ -256,8 +256,7 @@ describe('the stylesheet', () => {
     ]) {
       await assert.rejects(client.transformRequest(url), url);
     }
-    const sheet = await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct');
-    assert.doesNotMatch(sheet.code, /_secret/);
+    assert.doesNotMatch(await sheet(), /_secret/);
   });
 
   it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
@@ -451,14 +450,14 @@ describe('the stylesheet', () => {
   });
 
   it('is sent to pages that loaded it in dev when rules are added, also by a server environment', async () => {
-    const { server, transform } = await serve({
+    const { server, transform, sheet } = await serve({
       'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,
       'src/Card.jsx': `export const Card = () => <p css={{ color: 'red' }} />;`,
     });
     const { client, ssr } = server.environments;
     await client.transformRequest(stylesheetImport(await transform('src/Banner.jsx')));
     // As the server-rendered HTML links it.
-    await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct');
+    await sheet();
     const sent = [];
     client.hot.send = payload => sent.push(payload);
     await ssr.transformRequest('/src/Card.jsx');
@@ -760,13 +759,17 @@ async function serve(files, config = {}) {
   });
   servers.push(server);
   const client = server.environments.client;
+  // The stylesheet as Vite serves it.
+  const sheet = async () =>
+    (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
   return {
     root,
     server,
     transform: async file => (await client.transformRequest(`/${file}`)).code,
+    sheet,
     stylesheet: async code => {
       assert.ok(stylesheetImport(code));
-      return (await client.transformRequest('\0virtual:vite-plugin-compiled-react.css?direct')).code;
+      return sheet();
     },
     // The script that carries the stylesheet to the browser, in the version a module imports.
     script: async code => (await client.transformRequest(stylesheetImport(code))).code,
