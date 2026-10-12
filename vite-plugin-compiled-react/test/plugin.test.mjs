@@ -250,14 +250,21 @@ export const Logo = () => <p css={{
 
   it('gives the same relative URL its own class in each folder it resolves in', async () => {
     const icon = `export const Icon = () => <i css={{ backgroundImage: 'url(./icon.svg)' }} />;`;
+    // The root is `app`, and `c` takes its image from a folder beside it.
     const files = {
-      'index.html': `<script type="module" src="/main.jsx"></script>`,
-      'main.jsx': `import('./a/Icon.jsx'); import('./b/Icon.jsx');`,
-      'a/Icon.jsx': icon,
-      'a/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="a"/>',
-      'b/Icon.jsx': icon,
-      'b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
+      'app/index.html': `<script type="module" src="/main.jsx"></script>`,
+      'app/main.jsx': `import('./a/Icon.jsx'); import('./b/Icon.jsx'); import('./c/Icon.jsx');`,
+      'app/a/Icon.jsx': icon,
+      'app/a/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="a"/>',
+      'app/b/Icon.jsx': icon,
+      'app/b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
+      'app/c/Icon.jsx': icon.replace('./', '@shared/'),
+      'shared/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="c"/>',
     };
+    const inside = root => ({
+      root: join(root, 'app'),
+      resolve: { alias: { '@shared': join(root, 'shared') } },
+    });
     // The class and URL of the one rule giving each module's code its background image.
     const images = (css, modules) =>
       modules.map(code => {
@@ -267,19 +274,20 @@ export const Logo = () => <p css={{
         return used[0].slice(1);
       });
 
-    const output = await bundle(await fixture(files), { build: { assetsInlineLimit: 0 } });
+    const { root, ...config } = inside(await fixture(files));
+    const output = await bundle(root, { ...config, build: { assetsInlineLimit: 0 } });
     const file = test => output.find(test);
     const chunk = dir => file(({ facadeModuleId }) => facadeModuleId?.endsWith(`/${dir}/Icon.jsx`));
     const css = file(({ fileName }) => fileName.endsWith('.css')).source;
-    const built = images(css, [chunk('a').code, chunk('b').code]).map(([name, url]) => {
+    const built = images(css, ['a', 'b', 'c'].map(dir => chunk(dir).code)).map(([name, url]) => {
       const { source } = file(({ fileName }) => `/${fileName}` === url);
       return [name, Buffer.from(source).toString().match(/id="(\w)"/)[1]];
     });
-    assert.deepEqual(built.map(([, image]) => image), ['a', 'b']);
+    assert.deepEqual(built.map(([, image]) => image), ['a', 'b', 'c']);
 
-    // In another root, with Vite inlining the small files.
-    const { transform, sheet } = await serve(files);
-    const modules = [await transform('a/Icon.jsx'), await transform('b/Icon.jsx')];
+    // In another checkout, with Vite inlining the small files.
+    const { transform, sheet } = await serve(files, inside);
+    const modules = await Promise.all(['a', 'b', 'c'].map(dir => transform(`${dir}/Icon.jsx`)));
     assert.deepEqual(
       images(await sheet(), modules).map(([name, url]) => [
         name,

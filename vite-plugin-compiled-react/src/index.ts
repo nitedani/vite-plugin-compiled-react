@@ -403,10 +403,10 @@ async function resolveUrls(
 function renameClasses(rule: string, classNames: Map<string, string>, root: string) {
   const block = rule.lastIndexOf('{');
   const value = rule.slice(rule.indexOf(':', block) + 1).replace(/\}+$/, '');
-  const valueHash = hash(value.replaceAll(`"${encodeURI(root)}/`, '"/')).slice(
-    0,
-    ATOMIC_VALUE_HASH_LENGTH,
+  const portable = value.replace(/"((?:\/|[a-z]:\/)[^"]*)"/gi, (_, url: string) =>
+    JSON.stringify(path.posix.relative(encodeURI(root), url)),
   );
+  const valueHash = hash(portable).slice(0, ATOMIC_VALUE_HASH_LENGTH);
   const selectors = rule.slice(0, block).replace(/\.(_[\w-]+)/g, (_, name: string) => {
     const renamed = name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) + valueHash;
     classNames.set(name, renamed);
