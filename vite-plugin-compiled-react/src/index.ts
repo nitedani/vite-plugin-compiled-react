@@ -226,6 +226,8 @@ import.meta.hot.accept();`;
           retainLines: true,
           configFile: false,
           babelrc: false,
+          // Without extraction, the rules are read from it.
+          ast: !!server && !extractStyles,
           plugins: [
             isJsxFile && enableCssProp,
             [
@@ -255,8 +257,9 @@ import.meta.hot.accept();`;
         // drops the imports whose values Compiled inlined, which Vite's module graph then misses.
         // A module without rules has no values to update, and its imports would make it update
         // with them, reloading the page when it isn't a Fast Refresh boundary. Without extraction,
-        // the rules aren't known, so every module counts.
-        if (server && (styleRules.length || !extractStyles)) {
+        // the rules stay in the output, where strip-runtime finds them all the same.
+        const compiledRules = result.ast ? await findRules(result.ast, file) : styleRules;
+        if (server && compiledRules.length) {
           for (const source of await valueSources(resolver, file, imports)) {
             addDependent(source, id);
           }
@@ -371,6 +374,20 @@ async function valueImports(file: string) {
   );
   valueImportsCache.set(file, { mtimeMs, requests });
   return requests;
+}
+
+// The rules strip-runtime would extract from a module's output. It changes the AST, which the
+// output's code no longer needs.
+async function findRules(ast: babel.types.File, file: string) {
+  const result = await babel.transformFromAstAsync(ast, undefined, {
+    filename: file,
+    code: false,
+    cloneInputAst: false,
+    configFile: false,
+    babelrc: false,
+    plugins: [[stripRuntimeBabelPlugin, { compiledRequireExclude: true }]],
+  });
+  return (result?.metadata as unknown as BabelFileMetadata).styleRules ?? [];
 }
 
 function isReactServer(environment: Environment) {

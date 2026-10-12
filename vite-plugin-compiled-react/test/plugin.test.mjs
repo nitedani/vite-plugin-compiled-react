@@ -551,6 +551,48 @@ describe('dev', () => {
     assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
   });
 
+  it("doesn't update a module without rules when a module it imports changes, without extraction", async () => {
+    const fixture = await serve(
+      {
+        'src/index.css': ``,
+        'src/main.tsx': `
+          import './index.css';
+          import App from './App.tsx';
+          export const root = <App />;
+        `,
+        'src/App.tsx': `export default () => <p css={{ color: 'green' }} />; import.meta.hot.accept();`,
+      },
+      { extract: false },
+    );
+    for (const file of ['src/main.tsx', 'src/App.tsx']) await fixture.transform(file);
+    const sent = [];
+    fixture.server.environments.client.hot.send = payload => sent.push(payload);
+    await edit(fixture, 'src/App.tsx', `export default () => <p css={{ color: 'blue' }} />; import.meta.hot.accept();`);
+    await eventually(async () => JSON.stringify(sent), /App\.tsx/);
+    assert.doesNotMatch(JSON.stringify(sent), /main\.tsx|full-reload/);
+  });
+
+  it('re-compiles a module when a file in the middle of a chain of imports changes, without extraction', async () => {
+    const fixture = await serve(
+      {
+        'src/palette.ts': `export const palette = { red: 'red', blue: 'blue' };`,
+        'src/theme.ts': `import { palette } from './palette'; export const theme = { accent: palette.red };`,
+        'src/Card.tsx': `
+          import { theme } from './theme';
+          export const Card = () => <p css={{ color: theme.accent }} />;
+        `,
+      },
+      { extract: false },
+    );
+    assert.match(await fixture.transform('src/Card.tsx'), /color:red/);
+    await edit(
+      fixture,
+      'src/theme.ts',
+      `import { palette } from './palette'; export const theme = { accent: palette.blue };`,
+    );
+    await eventually(() => fixture.transform('src/Card.tsx'), /color:blue/);
+  });
+
   it('updates a .tsx module whose import TypeScript removed once Compiled inlined its value', async () => {
     const fixture = await serve({
       'src/colors.ts': `export const primary = 'red';`,
