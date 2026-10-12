@@ -348,7 +348,7 @@ export const slide = keyframes({ to: { borderImageSource: 'url(./icon.svg)' } })
   });
 
   it('builds keyframes with URLs about as fast as without, with values read through a large barrel', async () => {
-    // The modules values come from are each read once, not once per component using them.
+    // The modules values come from aren't read again for each component using them.
     const build = async image => {
       const files = { 'index.html': `<script type="module" src="/main.jsx"></script>` };
       for (let module = 0; module < 100; module++) {

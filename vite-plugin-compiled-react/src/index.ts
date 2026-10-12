@@ -477,7 +477,7 @@ async function resolveRules(
   return { rules: named, renamed: classNames.size > 0 };
 }
 
-// The rules of a stylesheet, which Compiled names with a class.
+// The rules of a stylesheet.
 function styleRules(root: postcss.Root) {
   const rules: postcss.Rule[] = [];
   root.walkRules(rule => {
@@ -533,6 +533,7 @@ function sourceKeyframes(file: string) {
 
 async function keyframesNames(code: string, file: string) {
   const names: string[] = [];
+  if (!code.includes('keyframes')) return names;
   const ast = await parse(code, file).catch(() => undefined);
   if (!ast) return names;
   const add = (callee: babel.NodePath, call: babel.types.Expression) => {
