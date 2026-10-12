@@ -259,15 +259,14 @@ import.meta.hot.accept();`;
         const { config } = this.environment;
         const { lib, cssCodeSplit, emitAssets } = config.build;
         if (!rules.size || !emitAssets || !lib) return;
-        const sheets: [name: string, rules: Iterable<string>][] = !cssCodeSplit
-          ? [[await libraryStylesheetName(config.root, lib), rules]]
-          : format === 'es' || format === 'cjs'
-            ? Object.values(bundle).flatMap(chunk => {
-                if (chunk.type !== 'chunk') return [];
-                const chunkRules = chunk.moduleIds.flatMap(id => moduleRules.get(id) ?? []);
-                return chunkRules.length ? [[chunkStylesheetName(chunk), chunkRules]] : [];
-              })
-            : [];
+        if (cssCodeSplit && format !== 'es' && format !== 'cjs') return;
+        const sheets: [name: string, rules: Iterable<string>][] = cssCodeSplit
+          ? Object.values(bundle).flatMap(chunk => {
+              if (chunk.type !== 'chunk') return [];
+              const chunkRules = chunk.moduleIds.flatMap(id => moduleRules.get(id) ?? []);
+              return chunkRules.length ? [[chunkStylesheetName(chunk), chunkRules]] : [];
+            })
+          : [[await libraryStylesheetName(config.root, lib), rules]];
         for (const [name, sheetRules] of sheets) {
           const source = await processStylesheet(config, sheetRules);
           const own = Object.values(bundle).find(
