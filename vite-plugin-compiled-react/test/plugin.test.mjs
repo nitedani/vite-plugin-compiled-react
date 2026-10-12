@@ -246,6 +246,46 @@ export const Logo = () => <p css={{
     assert.match(css, /mask-image:url\(\\"data:image\/svg\+xml.+id='mask'/);
   });
 
+  it('gives the same relative URL its own class in each folder it resolves in', async () => {
+    const icon = `export const Icon = () => <i css={{ backgroundImage: 'url(./icon.svg)' }} />;`;
+    const files = {
+      'index.html': `<script type="module" src="/main.jsx"></script>`,
+      'main.jsx': `import('./a/Icon.jsx'); import('./b/Icon.jsx');`,
+      'a/Icon.jsx': icon,
+      'a/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="a"/>',
+      'b/Icon.jsx': icon,
+      'b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
+    };
+    // The URL of the one rule giving each module's code its background image.
+    const images = (css, modules) =>
+      modules.map(code => {
+        const rules = [...css.matchAll(/\.(_\w+)\{background-image:url\("?([^")]+)"?\)\}/g)];
+        const used = rules.filter(([, name]) => code.includes(name));
+        assert.equal(used.length, 1, css);
+        return used[0][2];
+      });
+
+    const output = await bundle(await fixture(files), { build: { assetsInlineLimit: 0 } });
+    const file = test => output.find(test);
+    const chunk = dir => file(({ facadeModuleId }) => facadeModuleId?.endsWith(`/${dir}/Icon.jsx`));
+    const css = file(({ fileName }) => fileName.endsWith('.css')).source;
+    assert.deepEqual(
+      images(css, [chunk('a').code, chunk('b').code]).map(url => {
+        const { source } = file(({ fileName }) => `/${fileName}` === url);
+        return Buffer.from(source).toString().match(/id="(\w)"/)[1];
+      }),
+      ['a', 'b'],
+    );
+
+    const { transform, sheet } = await serve(files);
+    const modules = [await transform('a/Icon.jsx'), await transform('b/Icon.jsx')];
+    assert.deepEqual(
+      // Vite inlines the small files.
+      images(await sheet(), modules).map(url => decodeURIComponent(url).match(/id='(\w)'/)?.[1]),
+      ['a', 'b'],
+    );
+  });
+
   it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {
     const fixture = await serve(packageWithRules);
     const { client } = fixture.server.environments;

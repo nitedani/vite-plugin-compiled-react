@@ -6,6 +6,7 @@ import stripRuntimeBabelPlugin, {
   type BabelFileMetadata,
 } from '@compiled/babel-plugin-strip-runtime';
 import { sort } from '@compiled/css';
+import { ATOMIC_VALUE_HASH_LENGTH, hash } from '@compiled/utils';
 import type { CssFunction } from '@compiled/react';
 import enhancedResolve from 'enhanced-resolve';
 import { statSync } from 'node:fs';
@@ -278,10 +279,15 @@ import.meta.hot.accept();`;
           ].filter(Boolean) as PluginItem[],
         });
         if (!result?.code) return;
+        // Compiled names a class after its declaration as written, so a URL that resolves to a
+        // different file in another folder needs a class of its own.
+        const classNames = new Map<string, string>();
+        const { root } = this.environment.config;
         const styleRules = await Promise.all(
-          ((result.metadata as unknown as BabelFileMetadata).styleRules ?? []).map(rule =>
-            resolveUrls(this, rule, file),
-          ),
+          ((result.metadata as unknown as BabelFileMetadata).styleRules ?? []).map(async rule => {
+            const resolved = await resolveUrls(this, rule, file);
+            return resolved === rule ? rule : renameClasses(resolved, classNames, root);
+          }),
         );
         // In dev, a module with rules depends on the files its styles can read values from:
         // Compiled reports some, and TypeScript drops the imports of the values it inlined.
@@ -296,7 +302,9 @@ import.meta.hot.accept();`;
           }
         }
         setRules(id, styleRules);
-        let output = result.code;
+        let output = classNames.size
+          ? result.code.replace(/(?<![\w-])_[\w-]+/g, name => classNames.get(name) ?? name)
+          : result.code;
         if (styleRules.length && this.environment.config.build.lib && !server) {
           const sheet = moduleStylesheetId(file);
           moduleRules.set(sheet, styleRules);
@@ -389,6 +397,24 @@ async function resolveUrls(
 }
 
 // Replaces the URLs of a stylesheet's url()s for which `replace` returns one.
+// Names a rule's classes as Compiled does, after their declaration's value, with paths from the
+// root so the names don't depend on where the project is. The rest of each name, which `ax` groups
+// classes by, stays, and so does its length, which keeps the module's source map right.
+function renameClasses(rule: string, classNames: Map<string, string>, root: string) {
+  const block = rule.lastIndexOf('{');
+  const value = rule.slice(rule.indexOf(':', block) + 1).replace(/\}+$/, '');
+  const valueHash = hash(value.replaceAll(`"${encodeURI(root)}/`, '"/')).slice(
+    0,
+    ATOMIC_VALUE_HASH_LENGTH,
+  );
+  const selectors = rule.slice(0, block).replace(/\.(_[\w-]+)/g, (_, name: string) => {
+    const renamed = name.slice(0, -ATOMIC_VALUE_HASH_LENGTH) + valueHash;
+    classNames.set(name, renamed);
+    return `.${renamed}`;
+  });
+  return selectors + rule.slice(block);
+}
+
 async function replaceUrls(
   css: string,
   replace: (url: string) => string | undefined | Promise<string | undefined>,
