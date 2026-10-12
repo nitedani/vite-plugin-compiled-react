@@ -147,6 +147,44 @@ describe('the stylesheet', () => {
     );
   });
 
+  it("goes into a library's own stylesheet, the file Vite names after the library", async () => {
+    const buildLibrary = async (files, lib) => {
+      const [{ output }] = await build({
+        root: await fixture(files),
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [compiled()],
+        build: {
+          write: false,
+          lib: { entry: 'src/index.jsx', formats: ['es'], ...lib },
+          rollupOptions: { external: [/^react/, /^@compiled\/react/] },
+        },
+      });
+      return output.flatMap(({ fileName, source }) =>
+        fileName.endsWith('.css') ? [[fileName, source.replace(/\/\*\$vite\$:\d+\*\/|\n/g, '')]] : [],
+      );
+    };
+    const card = `export const Card = () => <p css={{ color: 'red' }} />;`;
+    assert.deepEqual(
+      await buildLibrary(
+        { 'src/index.jsx': `import './own.css';\n${card}`, 'src/own.css': `.own { color: blue }` },
+        { fileName: 'my-lib' },
+      ),
+      [['my-lib.css', '.own{color:#00f}._syaz5scu{color:red}']],
+    );
+    assert.deepEqual(
+      await buildLibrary(
+        { 'package.json': `{ "name": "@acme/ui" }`, 'src/index.jsx': card },
+        {},
+      ),
+      [['ui.css', '._syaz5scu{color:red}']],
+    );
+    assert.deepEqual(
+      await buildLibrary({ 'src/index.jsx': card }, { fileName: 'ui', cssFileName: 'styles' }),
+      [['styles.css', '._syaz5scu{color:red}']],
+    );
+  });
+
   it('keeps the newest rules in dev when a page runs an older version after a newer one', async () => {
     const { server, transform } = await serve({
       'src/Banner.jsx': `export const Banner = () => <p css={{ color: 'green' }} />;`,

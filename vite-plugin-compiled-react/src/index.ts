@@ -14,8 +14,10 @@ import {
   normalizePath,
   preprocessCSS,
   type Environment,
+  type LibraryOptions,
   type Plugin,
   type ResolvedConfig,
+  type Rollup,
   type Update,
   type ViteDevServer,
 } from 'vite';
@@ -63,7 +65,7 @@ const browserStylesheetRE = /^\0virtual:vite-plugin-compiled-react\.js(?:\?|$)/;
 // module calls when imported.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 
-export function compiled(options: CompiledPluginOptions = {}): Plugin {
+export function compiled(options: CompiledPluginOptions = {}): Plugin[] {
   let extract: boolean;
   let resolver: Resolver;
   let server: ViteDevServer | undefined;
@@ -78,8 +80,10 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
   const stylesheet = () => sort([...rules].sort().join(''));
+  const processStylesheet = async (config: ResolvedConfig) =>
+    (await preprocessCSS(stylesheet(), path.join(config.root, stylesheetName), config)).code;
 
-  return {
+  const plugin: Plugin = {
     name: 'vite-plugin-compiled-react',
     enforce: 'pre',
     // A build's client stylesheet then has the rules of the environments built before it.
@@ -114,13 +118,8 @@ export const useCache = () => {
             : undefined;
         }
         if (stylesheetRE.test(id)) return stylesheet();
-        const { config } = this.environment;
         const version = rules.size;
-        const { code } = await preprocessCSS(
-          stylesheet(),
-          path.join(config.root, stylesheetName),
-          config,
-        );
+        const code = await processStylesheet(this.environment.config);
         // A page can run an older version after a newer one: the version with more rules wins.
         return `import { updateStyle } from '/@vite/client';
 if (!(import.meta.hot.data.rules >= ${version})) {
@@ -194,16 +193,17 @@ import.meta.hot.accept();`;
     async generateBundle(_, bundle) {
       const { config } = this.environment;
       // React Server environments build before the client, whose stylesheet has their rules too.
-      if (!rules.size || !config.build.emitAssets || isReactServer(this.environment)) {
+      if (
+        !rules.size ||
+        !config.build.emitAssets ||
+        isReactServer(this.environment) ||
+        config.build.lib
+      ) {
         return;
       }
-      const { code } = await preprocessCSS(
-        stylesheet(),
-        path.join(config.root, stylesheetName),
-        config,
-      );
+      const source = await processStylesheet(config);
       const fileName = this.getFileName(
-        this.emitFile({ type: 'asset', name: stylesheetName, source: code }),
+        this.emitFile({ type: 'asset', name: stylesheetName, source }),
       );
       // Every page links it: HTML and manifest-based frameworks link the CSS of their entry chunks.
       for (const chunk of Object.values(bundle)) {
@@ -222,6 +222,42 @@ import.meta.hot.accept();`;
       if (dependentModules.length) return [...modules, ...dependentModules];
     },
   };
+
+  // A library's consumers import its one stylesheet, which Vite emits after the plugin's
+  // generateBundle.
+  const library: Plugin = {
+    name: 'vite-plugin-compiled-react:library',
+    generateBundle: {
+      order: 'post',
+      async handler(_, bundle) {
+        const { config } = this.environment;
+        if (!rules.size || !config.build.emitAssets || !config.build.lib) return;
+        const name = await libraryStylesheetName(config.root, config.build.lib);
+        const source = await processStylesheet(config);
+        const own = Object.values(bundle).find(
+          (output): output is Rollup.OutputAsset =>
+            output.type === 'asset' && output.names.includes(name),
+        );
+        if (own) own.source += source;
+        else this.emitFile({ type: 'asset', name, source });
+      },
+    },
+  };
+
+  return [plugin, library];
+}
+
+// Vite's file name for a library's stylesheet.
+async function libraryStylesheetName(root: string, { cssFileName, fileName }: LibraryOptions) {
+  if (typeof cssFileName === 'string') return `${cssFileName}.css`;
+  if (typeof fileName === 'string') return `${fileName}.css`;
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    const { name } = JSON.parse(
+      await readFile(path.join(dir, 'package.json'), 'utf8').catch(() => '{}'),
+    );
+    if (name) return `${name.replace(/^@[^/]+\//, '')}.css`;
+    if (dir === path.dirname(dir)) return stylesheetName;
+  }
 }
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it
