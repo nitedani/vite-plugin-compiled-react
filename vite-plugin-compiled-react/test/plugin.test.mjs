@@ -11,11 +11,10 @@ import { compiled } from '../lib/index.js';
 // Fixtures live in the package, so they resolve @compiled/react and react from its node_modules.
 const packageDir = fileURLToPath(new URL('..', import.meta.url));
 const servers = [];
+const roots = [];
 after(async () => {
-  for (const { server, root } of servers) {
-    await server.close();
-    await rm(root, { recursive: true });
-  }
+  for (const server of servers) await server.close();
+  for (const root of roots) await rm(root, { recursive: true });
 });
 
 describe('the css prop', () => {
@@ -629,6 +628,7 @@ async function eventually(read, pattern) {
 
 async function fixture(files) {
   const root = await mkdtemp(join(packageDir, '.fixture-'));
+  roots.push(root);
   for (const [file, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await writeFile(join(root, file), content);
@@ -693,7 +693,7 @@ async function serve(files, config = {}) {
     plugins: [compiled({ extract })],
     ...viteConfig,
   });
-  servers.push({ server, root });
+  servers.push(server);
   const client = server.environments.client;
   return {
     root,
