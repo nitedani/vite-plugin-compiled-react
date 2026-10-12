@@ -192,7 +192,13 @@ describe('the stylesheet', () => {
   };
 
   it("resolves its URLs like Vite's CSS, with the base, and a package's relative to its .compiled.css", async () => {
-    const root = await fixture({ ...urls, 'index.html': `<script type="module" src="/src/Logo.jsx"></script>` });
+    // A `)` in the path would end an unquoted url().
+    const inApp = files =>
+      Object.fromEntries(Object.entries(files).map(([file, content]) => [`app (copy)/${file}`, content]));
+    const root = join(
+      await fixture(inApp({ ...urls, 'index.html': `<script type="module" src="/src/Logo.jsx"></script>` })),
+      'app (copy)',
+    );
     const { output } = await build({
       root,
       base: '/app/',
@@ -211,7 +217,10 @@ describe('the stylesheet', () => {
     assert.match(sheet.source, /url\("\/app\/logo\.svg"\)/);
     assert.match(sheet.source, new RegExp(`url\\("/app/${icon.fileName}"\\)`));
 
-    const { server, transform, script } = await serve(urls, { base: '/app/' });
+    const { server, transform, script } = await serve(inApp(urls), dir => ({
+      root: join(dir, 'app (copy)'),
+      base: '/app/',
+    }));
     const icons = await transform('node_modules/ext-icons/index.js');
     const iconsSheet = icons.match(/import "\/app\/@id\/__x00__([^"]+)"/)[1];
     await server.environments.client.transformRequest('\0' + iconsSheet);

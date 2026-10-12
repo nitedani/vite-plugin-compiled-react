@@ -183,10 +183,11 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          // The stylesheet is one file: relative URLs get the directory of the package's file.
-          const css = (await readFile(packageStylesheet, 'utf8')).replace(
-            /url\((\s*['"]?)(?![a-z][a-z\d+.-]*:|[/#])/gi,
-            `url($1${path.dirname(packageStylesheet)}/`,
+          // The stylesheet is one file: relative URLs become the paths of their files.
+          const css = await replaceUrls(await readFile(packageStylesheet, 'utf8'), url =>
+            /^(?:[a-z][a-z\d+.-]*:|[/#]|$)/i.test(url)
+              ? undefined
+              : normalizePath(path.join(path.dirname(packageStylesheet), url)),
           );
           setRules(id, [css]);
           // A build links the stylesheet on every page.
