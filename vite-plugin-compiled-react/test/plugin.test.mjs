@@ -146,7 +146,7 @@ describe('the stylesheet', () => {
     const sheet = output.find(({ fileName }) => fileName === links[0][1]).source;
     assert.equal(
       sheet,
-      '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
+      '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (width>=600px){._10s713q2{color:#00f}}\n',
     );
   });
 
@@ -177,8 +177,48 @@ describe('the stylesheet', () => {
     const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
     assert.deepEqual(
       sheets.map(({ source }) => source),
-      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
+      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (width>=600px){._10s713q2{color:#00f}}\n'],
     );
+  });
+
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+  const urls = {
+    'public/logo.svg': svg,
+    'node_modules/ext-icons/package.json': `{ "name": "ext-icons", "type": "module", "main": "index.js" }`,
+    'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
+    'node_modules/ext-icons/index.compiled.css': '._1q8vicon{background-image:url(./icon.svg)}',
+    'node_modules/ext-icons/icon.svg': svg,
+    'src/Logo.jsx': `import 'ext-icons';\nexport const Logo = () => <p css={{ backgroundImage: 'url(/logo.svg)' }} />;`,
+  };
+
+  it("resolves its URLs like Vite's CSS, with the base, and a package's relative to its .compiled.css", async () => {
+    const root = await fixture({ ...urls, 'index.html': `<script type="module" src="/src/Logo.jsx"></script>` });
+    const { output } = await build({
+      root,
+      base: '/app/',
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [compiled()],
+      build: {
+        write: false,
+        assetsInlineLimit: 0,
+        rollupOptions: { external: [/^react/, /^@compiled\/react/] },
+      },
+    });
+    const icon = output.find(({ fileName }) => /icon-.+\.svg$/.test(fileName));
+    assert.ok(icon);
+    const [sheet] = output.filter(({ fileName }) => fileName.endsWith('.css'));
+    assert.match(sheet.source, /url\(\/app\/logo\.svg\)/);
+    assert.match(sheet.source, new RegExp(`url\\(/app/${icon.fileName}\\)`));
+
+    const { server, transform, script } = await serve(urls, { base: '/app/' });
+    const icons = await transform('node_modules/ext-icons/index.js');
+    const iconsSheet = icons.match(/import "\/app\/@id\/__x00__([^"]+)"/)[1];
+    await server.environments.client.transformRequest('\0' + iconsSheet);
+    const css = await script(await transform('src/Logo.jsx'));
+    assert.match(css, /url\(\/app\/logo\.svg\)/);
+    // Vite inlines the small icon.
+    assert.match(css, /_1q8vicon\{background-image:url\(\\"data:image\/svg\+xml/);
   });
 
   it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {
@@ -388,7 +428,7 @@ describe('the stylesheet', () => {
     const { output } = await builder.build(builder.environments.client);
     assert.deepEqual(
       output.filter(({ fileName }) => fileName.endsWith('.css')).map(({ source }) => source),
-      ['._syaz5scu{color:red}._syazbf54{color:green}'],
+      ['._syaz5scu{color:red}._syazbf54{color:green}\n'],
     );
   });
 
@@ -675,7 +715,7 @@ function browserPage(head = '') {
 
 // The id of the stylesheet a module imports, with its query.
 function stylesheetImport(code) {
-  const url = code.match(/import "\/@id\/__x00__(virtual:vite-plugin-compiled-react\.js[^"]*)"/)?.[1];
+  const url = code.match(/import "[^"]*\/@id\/__x00__(virtual:vite-plugin-compiled-react\.js[^"]*)"/)?.[1];
   return url && '\0' + url;
 }
 

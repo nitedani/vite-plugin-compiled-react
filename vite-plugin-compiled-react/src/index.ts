@@ -12,11 +12,12 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   isFileLoadingAllowed,
+  type DevEnvironment,
   normalizePath,
-  preprocessCSS,
   type Environment,
   type Plugin,
   type ResolvedConfig,
+  type Rollup,
   type Update,
   type ViteDevServer,
 } from 'vite';
@@ -54,8 +55,7 @@ declare module 'react' {
   }
 }
 
-const stylesheetName = 'vite-plugin-compiled-react.css';
-const stylesheetId = `virtual:${stylesheetName}`;
+const stylesheetId = 'virtual:vite-plugin-compiled-react.css';
 const stylesheetRE = /^\0virtual:vite-plugin-compiled-react\.css(?:\?|$)/;
 // Browsers request a virtual module under /@id/, with \0 encoded.
 const browserUrl = (id: string) => `/@id/__x00__${id}`;
@@ -96,8 +96,6 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // stylesheet, and its file name, the same whatever order its modules compile in.
   const stylesheet = (sheetRules: Iterable<string> = rules) =>
     sort([...sheetRules].sort().join(''));
-  const processStylesheet = async (config: ResolvedConfig) =>
-    (await preprocessCSS(stylesheet(), path.join(config.root, stylesheetName), config)).code;
   const addRules = (newRules: Iterable<string>) => {
     const ruleCount = rules.size;
     for (const rule of newRules) rules.add(rule);
@@ -125,6 +123,19 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
     },
     configureServer(devServer) {
       server = devServer;
+    },
+    buildStart() {
+      const { config } = this.environment;
+      // React Server environments build before the client, whose stylesheet has their rules too.
+      if (
+        !server &&
+        extract &&
+        config.build.emitAssets &&
+        !isReactServer(this.environment) &&
+        !config.build.lib
+      ) {
+        this.emitFile({ type: 'chunk', id: stylesheetId, name: 'vite-plugin-compiled-react' });
+      }
     },
     resolveId: {
       filter: {
@@ -173,7 +184,12 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           }
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          addRules([await readFile(packageStylesheet, 'utf8')]);
+          // The stylesheet is one file: relative URLs get the directory of the package's file.
+          const css = (await readFile(packageStylesheet, 'utf8')).replace(
+            /url\((\s*['"]?)(?![a-z][a-z\d+.-]*:|[/#])/gi,
+            `url($1${path.dirname(packageStylesheet)}/`,
+          );
+          addRules([css]);
           // A build links the stylesheet on every page.
           return server
             ? `import ${JSON.stringify(stylesheetId)};
@@ -188,10 +204,16 @@ export const useCache = () => {
 };`
             : undefined;
         }
-        if (stylesheetRE.test(id)) return stylesheet();
+        if (stylesheetRE.test(id)) {
+          // In a build, it waits for every module, which can add rules.
+          if (!server) await loadModuleGraph(this, id);
+          return stylesheet();
+        }
         if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
         const version = rules.size;
-        const code = await processStylesheet(this.environment.config);
+        const { code } = (await (this.environment as DevEnvironment).transformRequest(
+          `\0${stylesheetId}?direct`,
+        ))!;
         // A page can run an older version after a newer one: the version with more rules wins.
         // A page can also link the stylesheet more than once, for example from server-rendered HTML
         // and from a React Server Components payload, and Vite's hot update replaces one link only:
@@ -285,26 +307,14 @@ import.meta.hot.accept();`;
         return { code: output, map: result.map };
       },
     },
-    async generateBundle(_, bundle) {
-      const { config } = this.environment;
-      // React Server environments build before the client, whose stylesheet has their rules too.
-      if (
-        !rules.size ||
-        !config.build.emitAssets ||
-        isReactServer(this.environment) ||
-        config.build.lib
-      ) {
-        return;
-      }
-      const source = await processStylesheet(config);
-      const fileName = this.getFileName(
-        this.emitFile({ type: 'asset', name: stylesheetName, source }),
-      );
+    generateBundle(_, bundle) {
+      const chunks = Object.values(bundle).filter(chunk => chunk.type === 'chunk');
+      const sheet = chunks.find(chunk => chunk.moduleIds.includes('\0' + stylesheetId));
+      if (!sheet) return;
       // Every page links it: HTML and manifest-based frameworks link the CSS of their entry chunks.
-      for (const chunk of Object.values(bundle)) {
-        if (chunk.type === 'chunk' && chunk.isEntry) {
-          chunk.viteMetadata!.importedCss.add(fileName);
-        }
+      for (const chunk of chunks) {
+        if (!chunk.isEntry) continue;
+        for (const css of sheet.viteMetadata!.importedCss) chunk.viteMetadata!.importedCss.add(css);
       }
     },
     hotUpdate({ file, modules }) {
@@ -317,6 +327,24 @@ import.meta.hot.accept();`;
       if (dependentModules.length) return [...modules, ...dependentModules];
     },
   };
+}
+
+// Loads the modules of a build, and the modules they import, but the one loading.
+async function loadModuleGraph(context: Rollup.PluginContext, loading: string) {
+  const loaded = new Set([loading]);
+  for (;;) {
+    const ids = [...context.getModuleIds()].filter(id => !loaded.has(id));
+    if (!ids.length) return;
+    for (const id of ids) loaded.add(id);
+    await Promise.all(
+      ids.map(async id => {
+        // Rolldown never finishes loading an external module.
+        const { importers, dynamicImporters } = context.getModuleInfo(id)!;
+        const resolved = await context.resolve(id, importers[0] ?? dynamicImporters[0]);
+        if (!resolved?.external) await context.load({ id, resolveDependencies: true });
+      }),
+    );
+  }
 }
 
 // Parse only: Vite transforms TypeScript and JSX afterwards. JSX is off in .ts files, where it
