@@ -477,14 +477,11 @@ async function resolveRules(
   return { rules: named, renamed: classNames.size > 0 };
 }
 
-// The rules of a stylesheet outside its @keyframes, which Compiled names with a class.
+// The rules of a stylesheet, which Compiled names with a class.
 function styleRules(root: postcss.Root) {
   const rules: postcss.Rule[] = [];
   root.walkRules(rule => {
-    const { parent } = rule;
-    if (!(parent?.type === 'atrule' && /keyframes$/.test((parent as postcss.AtRule).name))) {
-      rules.push(rule);
-    }
+    rules.push(rule);
   });
   return rules;
 }
