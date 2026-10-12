@@ -258,33 +258,34 @@ export const Logo = () => <p css={{
       'b/Icon.jsx': icon,
       'b/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="b"/>',
     };
-    // The URL of the one rule giving each module's code its background image.
+    // The class and URL of the one rule giving each module's code its background image.
     const images = (css, modules) =>
       modules.map(code => {
         const rules = [...css.matchAll(/\.(_\w+)\{background-image:url\("?([^")]+)"?\)\}/g)];
         const used = rules.filter(([, name]) => code.includes(name));
         assert.equal(used.length, 1, css);
-        return used[0][2];
+        return used[0].slice(1);
       });
 
     const output = await bundle(await fixture(files), { build: { assetsInlineLimit: 0 } });
     const file = test => output.find(test);
     const chunk = dir => file(({ facadeModuleId }) => facadeModuleId?.endsWith(`/${dir}/Icon.jsx`));
     const css = file(({ fileName }) => fileName.endsWith('.css')).source;
-    assert.deepEqual(
-      images(css, [chunk('a').code, chunk('b').code]).map(url => {
-        const { source } = file(({ fileName }) => `/${fileName}` === url);
-        return Buffer.from(source).toString().match(/id="(\w)"/)[1];
-      }),
-      ['a', 'b'],
-    );
+    const built = images(css, [chunk('a').code, chunk('b').code]).map(([name, url]) => {
+      const { source } = file(({ fileName }) => `/${fileName}` === url);
+      return [name, Buffer.from(source).toString().match(/id="(\w)"/)[1]];
+    });
+    assert.deepEqual(built.map(([, image]) => image), ['a', 'b']);
 
+    // In another root, with Vite inlining the small files.
     const { transform, sheet } = await serve(files);
     const modules = [await transform('a/Icon.jsx'), await transform('b/Icon.jsx')];
     assert.deepEqual(
-      // Vite inlines the small files.
-      images(await sheet(), modules).map(url => decodeURIComponent(url).match(/id='(\w)'/)?.[1]),
-      ['a', 'b'],
+      images(await sheet(), modules).map(([name, url]) => [
+        name,
+        decodeURIComponent(url).match(/id='(\w)'/)?.[1],
+      ]),
+      built,
     );
   });
 
