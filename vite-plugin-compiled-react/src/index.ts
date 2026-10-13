@@ -94,6 +94,9 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
   // all extracted rules go into one stylesheet. A module compiled again replaces its rules.
   const rules = new Map<string, string[]>();
+  // The at-rules without a block of package stylesheets, such as an @import of a URL: they go
+  // first, before Compiled's sort, which would give them a block.
+  const statements = new Map<string, string[]>();
   // Counts the changes of the rules: pages keep the stylesheet of the newest.
   let revision = 0;
   // In a library, each module with rules imports a stylesheet of its own, so its rules go wherever
@@ -113,16 +116,20 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   };
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
-  const stylesheet = (sheetRules: Iterable<string> = new Set([...rules.values()].flat())) => {
-    const sorted = [...sheetRules].sort();
-    return (
-      sorted.filter(isStatement).join('') + sort(sorted.filter(rule => !isStatement(rule)).join(''))
-    );
-  };
-  const setRules = (id: string, newRules: string[]) => {
-    if (JSON.stringify(rules.get(id) ?? []) === JSON.stringify(newRules)) return;
+  const stylesheet = (
+    sheetRules: Iterable<string> = new Set([...rules.values()].flat()),
+    // Each package's in their order, and the packages sorted, as they load in no set order.
+    sheetStatements: Iterable<string> = new Set(
+      [...statements.keys()].sort().flatMap(id => statements.get(id)!),
+    ),
+  ) => [...sheetStatements].join('') + sort([...sheetRules].sort().join(''));
+  const setRules = (id: string, newRules: string[], newStatements: string[] = []) => {
+    const current = [rules.get(id) ?? [], statements.get(id) ?? []];
+    if (JSON.stringify(current) === JSON.stringify([newRules, newStatements])) return;
     if (newRules.length) rules.set(id, newRules);
     else rules.delete(id);
+    if (newStatements.length) statements.set(id, newStatements);
+    else statements.delete(id);
     revision++;
     if (server) refreshStylesheet(server);
   };
@@ -201,16 +208,12 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          const { rules: sheetRules, deps } = await packageRules(
-            this,
-            packageStylesheet,
-            importsConfig,
-          );
-          for (const dep of deps) {
+          const sheet = await packageRules(this, packageStylesheet, importsConfig);
+          for (const dep of sheet.deps) {
             this.addWatchFile(dep);
             if (server) addDependent(dep, id);
           }
-          setRules(id, sheetRules);
+          setRules(id, sheet.rules, sheet.statements);
           // A build links the stylesheet on every page.
           return server
             ? `import ${JSON.stringify(stylesheetId)};
@@ -226,7 +229,7 @@ export const useCache = () => {
             : undefined;
         }
         if (stylesheetRE.test(id)) return stylesheet();
-        if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
+        if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!, []);
         const version = revision;
         const { code } = (await (this.environment as DevEnvironment).transformRequest(
           `\0${stylesheetId}?direct`,
@@ -432,8 +435,9 @@ async function resolveUrls(
   return { css: write(file => file), portable: write(file => path.posix.relative(root, file)) };
 }
 
-// A package stylesheet's rules, with the stylesheets it imports inlined in place as Vite inlines
-// them, which Compiled's sort would otherwise move, and the files they come from.
+// A package stylesheet's rules and its at-rules without a block, with the stylesheets it imports
+// inlined in place as Vite inlines them, which Compiled's sort would otherwise move, and the files
+// they come from.
 async function packageRules(
   context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
   file: string,
@@ -445,12 +449,11 @@ async function packageRules(
     importsConfig,
   );
   const { css } = await resolveUrls(context, code, file);
-  // The at-rules without a block that remain, such as an @import of a URL, go first.
   const root = postcss.parse(css);
   const statements = [...root.nodes].flatMap(node =>
     node.type === 'atrule' && !node.nodes ? [`${node.remove()};`] : [],
   );
-  return { rules: [...statements, root.toString()], deps };
+  return { rules: [root.toString()], statements, deps };
 }
 
 // Compiled names a class, or keyframes, after the text of the CSS it names, so a URL that resolves
@@ -650,10 +653,6 @@ function stylesheetBase({ base, build }: ResolvedConfig) {
       );
   return `${path.posix.relative(directory, '') || '.'}/`;
 }
-
-// An at-rule without a block, such as @import, which only the start of a stylesheet can hold:
-// Compiled's sort would give it a block.
-const isStatement = (rule: string) => /^@[^{}]*;$/.test(rule);
 
 // A CSS escape is a backslash before a character, or before a code point in hex.
 const unescapeCss = (value: string) =>
