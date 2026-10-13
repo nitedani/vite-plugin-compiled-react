@@ -194,7 +194,7 @@ describe('the stylesheet', () => {
     'node_modules/ext-icons/index.js': `import './index.compiled.css';`,
     'node_modules/ext-icons/index.compiled.css':
       '._1q8vicon{background-image:url(./icon.svg)}._1q8vbrnd{border-image-source:url(@/brand.svg)}' +
-      '._1q8vspce{list-style-image:url(./my\\ icon.svg)}',
+      '._1q8vspce{list-style-image:url(./my\\ icon.svg)}._1q8vhex{list-style-image:url(./my\\20 icon.svg)}',
     'node_modules/ext-icons/icon.svg': svg,
     'node_modules/ext-icons/my icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="space"/>',
     // Files with the same content would be emitted once.
@@ -236,7 +236,7 @@ export const Logo = () => <p css={{
       assert.deepEqual(
         urls.sort(),
         // `mask-image` gets a prefixed copy.
-        [icon, mask, mask, brand, brand, space, 'logo.svg', 'my%20logo.svg'].sort(),
+        [icon, mask, mask, brand, brand, space, space, 'logo.svg', 'my%20logo.svg'].sort(),
       );
     };
     await buildUrls('/app/');

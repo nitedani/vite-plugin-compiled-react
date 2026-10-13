@@ -83,7 +83,7 @@ const packageStylesheetScriptRE = /^\0vite-plugin-compiled-react:(.+\.compiled\.
 const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 // A url() and its URL, quoted or not, with CSS escapes. Strings and comments match whole, so the
 // url()s in their text don't.
-const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\.|[^\s'"()\\])*))\s*\)/gi;
+const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\(?:[\da-f]{1,6}\s?|.)|[^\s'"()\\])*))\s*\)/gi;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
