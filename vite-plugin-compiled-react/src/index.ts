@@ -84,21 +84,14 @@ const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 // A url() and its URL, quoted or not, with CSS escapes. Strings and comments match whole, so the
 // url()s in their text don't.
 const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\(?:[\da-f]{1,6}\s?|.)|[^\s'"()\\])*))\s*\)/gi;
-// The statements an @import may follow, and the @import itself.
-const importFirstRE = /^@(?:charset|layer|import)\b/i;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
   let resolver: Resolver;
-  // Vite's CSS options without the project's plugins, which run on the whole stylesheet.
-  let importsConfig: ResolvedConfig;
   let server: ViteDevServer | undefined;
   // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
   // all extracted rules go into one stylesheet. A module compiled again replaces its rules.
   const rules = new Map<string, string[]>();
-  // The at-rules without a block of package stylesheets, such as an @import of a URL: they go
-  // first, before Compiled's sort, which would give them a block.
-  const statements = new Map<string, string[]>();
   // Counts the changes of the rules: pages keep the stylesheet of the newest.
   let revision = 0;
   // In a library, each module with rules imports a stylesheet of its own, so its rules go wherever
@@ -118,24 +111,12 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
   };
   // Compiled's sort keeps the order of rules of the same kind: sorting them first makes a build's
   // stylesheet, and its file name, the same whatever order its modules compile in.
-  const stylesheet = (
-    sheetRules: Iterable<string> = new Set([...rules.values()].flat()),
-    // Each package's in their order, and the packages sorted, as they load in no set order.
-    sheetStatements: Iterable<string> = new Set(
-      [...statements.keys()]
-        .sort()
-        .flatMap(id => statements.get(id)!)
-        // Another package's @namespace before an @import would make the @import invalid.
-        .sort((a, b) => Number(!importFirstRE.test(a)) - Number(!importFirstRE.test(b))),
-    ),
-  ) => [...sheetStatements].join('') + sort([...sheetRules].sort().join(''));
-  const setRules = (id: string, newRules: string[], newStatements: string[] = []) => {
-    const current = [rules.get(id) ?? [], statements.get(id) ?? []];
-    if (JSON.stringify(current) === JSON.stringify([newRules, newStatements])) return;
+  const stylesheet = (sheetRules: Iterable<string> = new Set([...rules.values()].flat())) =>
+    sort([...sheetRules].sort().join(''));
+  const setRules = (id: string, newRules: string[]) => {
+    if (JSON.stringify(rules.get(id) ?? []) === JSON.stringify(newRules)) return;
     if (newRules.length) rules.set(id, newRules);
     else rules.delete(id);
-    if (newStatements.length) statements.set(id, newStatements);
-    else statements.delete(id);
     revision++;
     if (server) refreshStylesheet(server);
   };
@@ -158,10 +139,6 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           ? options.extract[config.command]
           : (options.extract ?? true);
       resolver = createResolver(config);
-      importsConfig = {
-        ...config,
-        css: { ...config.css, transformer: 'postcss', postcss: { plugins: [] } },
-      };
     },
     configureServer(devServer) {
       server = devServer;
@@ -214,12 +191,12 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          const sheet = await packageRules(this, packageStylesheet, importsConfig);
-          for (const dep of sheet.deps) {
-            this.addWatchFile(dep);
-            if (server) addDependent(dep, id);
-          }
-          setRules(id, sheet.rules, sheet.statements);
+          const { css } = await resolveUrls(
+            this,
+            await readFile(packageStylesheet, 'utf8'),
+            packageStylesheet,
+          );
+          setRules(id, [css]);
           // A build links the stylesheet on every page.
           return server
             ? `import ${JSON.stringify(stylesheetId)};
@@ -235,7 +212,7 @@ export const useCache = () => {
             : undefined;
         }
         if (stylesheetRE.test(id)) return stylesheet();
-        if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!, []);
+        if (moduleStylesheetIdRE.test(id)) return stylesheet(moduleRules.get(id)!);
         const version = revision;
         const { code } = (await (this.environment as DevEnvironment).transformRequest(
           `\0${stylesheetId}?direct`,
@@ -439,28 +416,6 @@ async function resolveUrls(
       ),
     );
   return { css: write(file => file), portable: write(file => path.posix.relative(root, file)) };
-}
-
-// A package stylesheet's rules and its at-rules without a block, with the stylesheets it imports
-// inlined in place as Vite inlines them, which Compiled's sort would otherwise move, and the files
-// they come from.
-async function packageRules(
-  context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
-  file: string,
-  importsConfig: ResolvedConfig,
-) {
-  const { code, deps = [] } = await preprocessCSS(
-    // After other rules, a byte order mark would become part of the selector that follows it.
-    (await readFile(file, 'utf8')).replace(/^\uFEFF/, ''),
-    file,
-    importsConfig,
-  );
-  const { css } = await resolveUrls(context, code, file);
-  const root = postcss.parse(css);
-  const statements = [...root.nodes].flatMap(node =>
-    node.type === 'atrule' && !node.nodes ? [`${node.remove()};`] : [],
-  );
-  return { rules: [root.toString()], statements, deps };
 }
 
 // Compiled names a class, or keyframes, after the text of the CSS it names, so a URL that resolves

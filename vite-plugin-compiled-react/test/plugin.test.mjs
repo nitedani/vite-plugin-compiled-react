@@ -151,99 +151,21 @@ describe('the stylesheet', () => {
     'node_modules/ext-lib/index.js': `import './index.compiled.css';\nexport const Ext = () => null;`,
     'node_modules/ext-lib/index.compiled.css': '._30l3bf54:hover{color:green}._syaz5scu{color:red}',
   };
-  const packageWithImports = {
-    'node_modules/ext-fonts/package.json': `{ "name": "ext-fonts", "type": "module", "main": "index.js" }`,
-    'node_modules/ext-fonts/index.js': `import './index.compiled.css';`,
-    'node_modules/ext-fonts/index.compiled.css':
-      '@import "./fonts.css";@import url(./more.css);@import url(https://example.com/font.css);._icon{color:blue}',
-    'node_modules/ext-fonts/fonts.css': '._font{color:red}',
-    'node_modules/ext-fonts/more.css': '._more{color:green}',
-  };
-
   it('holds the rules of the .compiled.css files packages ship, in place of their own CSS', async () => {
     const root = await fixture({
       ...packageWithRules,
-      ...packageWithImports,
       'index.html': `<script type="module" src="/src/main.jsx"></script>`,
       'src/main.jsx': `
         export const Card = () => <p css={{ color: 'red', '@media (min-width: 600px)': { color: 'blue' } }} />;
         import('./About.jsx');
       `,
-      'src/About.jsx': `import 'ext-fonts';\nimport { Ext } from 'ext-lib';\nexport const About = () => <Ext />;`,
-    });
-    const output = await bundle(root);
-    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
-    assert.deepEqual(
-      // Vite's versions inline imports with different line breaks.
-      sheets.map(({ source }) => source.replace(/\n/g, '')),
-      [
-        // A package's imports are inlined where they are, and an import of a URL goes first.
-        '@import url(https://example.com/font.css);._font{color:red}._more{color:green}._icon{color:blue}' +
-          '._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}',
-      ],
-    );
-  });
-
-  it("runs the project's PostCSS plugins once on a package's rules", async () => {
-    const root = await fixture({
-      ...packageWithImports,
-      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
-      'src/main.jsx': `import 'ext-fonts';`,
-    });
-    // Like postcss-prefix-selector.
-    const prefix = {
-      postcssPlugin: 'prefix',
-      Rule(rule) {
-        rule.selectors = rule.selectors.map(selector => `.app ${selector}`);
-      },
-    };
-    const output = await bundle(root, { css: { postcss: { plugins: [prefix] } } });
-    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
-    assert.deepEqual(
-      sheets.map(({ source }) => source.replace(/\n/g, '')),
-      [
-        '@import url(https://example.com/font.css);' +
-          '.app ._font{color:red}.app ._more{color:green}.app ._icon{color:blue}',
-      ],
-    );
-  });
-
-  it("puts a package stylesheet's at-rules without a block first, in their order, and drops its byte order mark", async () => {
-    const root = await fixture({
-      'node_modules/ext-layers/package.json': `{ "name": "ext-layers", "type": "module", "main": "index.js" }`,
-      'node_modules/ext-layers/index.js': `import './index.compiled.css';`,
-      // The first statement naming a layer sets its priority.
-      'node_modules/ext-layers/index.compiled.css': '\uFEFF@layer b;@layer a;._x{color:blue}',
-      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
-      'src/main.jsx': `import 'ext-layers';\nexport const Card = () => <p css={{ color: 'red' }} />;`,
+      'src/About.jsx': `import { Ext } from 'ext-lib';\nexport const About = () => <Ext />;`,
     });
     const output = await bundle(root);
     const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
     assert.deepEqual(
       sheets.map(({ source }) => source),
-      ['@layer b;@layer a;._syaz5scu{color:red}._x{color:blue}'],
-    );
-  });
-
-  it("puts every package's @import before another package's @namespace", async () => {
-    const root = await fixture({
-      'node_modules/ext-a/package.json': `{ "name": "ext-a", "type": "module", "main": "index.js" }`,
-      'node_modules/ext-a/index.js': `import './index.compiled.css';`,
-      'node_modules/ext-a/index.compiled.css': '@namespace svg url(http://www.w3.org/2000/svg);._a{color:blue}',
-      'node_modules/ext-b/package.json': `{ "name": "ext-b", "type": "module", "main": "index.js" }`,
-      'node_modules/ext-b/index.js': `import './index.compiled.css';`,
-      'node_modules/ext-b/index.compiled.css': '@import url(https://e.com/a.css);._b{color:green}',
-      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
-      'src/main.jsx': `import 'ext-a';\nimport 'ext-b';\nexport const Card = () => <p css={{ color: 'red' }} />;`,
-    });
-    const output = await bundle(root);
-    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
-    assert.deepEqual(
-      sheets.map(({ source }) => source.replace(/\n/g, '')),
-      [
-        '@import url(https://e.com/a.css);@namespace svg url(http://www.w3.org/2000/svg);' +
-          '._a{color:blue}._b{color:green}._syaz5scu{color:red}',
-      ],
+      ['._syaz5scu{color:red}._30l3bf54:hover{color:green}@media (min-width:600px){._10s713q2{color:blue}}'],
     );
   });
 
@@ -537,33 +459,18 @@ export const C = () => <i css={{ animationName: fade, color: t0_${component} }} 
   });
 
   it('holds the rules of the .compiled.css files packages ship in dev, and their changes', async () => {
-    const fixture = await serve({ ...packageWithRules, ...packageWithImports });
+    const fixture = await serve(packageWithRules);
     const { client } = fixture.server.environments;
-    const scriptOf = async file =>
-      (await client.transformRequest(file)).code
-        .match(/import "(\/@id\/__x00__[^"]+)"/)[1]
-        .replace('/@id/__x00__', '\0');
-    const [script, fontsScript] = await Promise.all(
-      ['/node_modules/ext-lib/index.js', '/node_modules/ext-fonts/index.js'].map(scriptOf),
-    );
+    const ext = await client.transformRequest('/node_modules/ext-lib/index.js');
+    const script = ext.code.match(/import "(\/@id\/__x00__[^"]+)"/)[1].replace('/@id/__x00__', '\0');
     assert.match(script, /index\.compiled\.css\.js(?:\?|$)/);
     const stylesheet = async () => {
-      for (const id of [script, fontsScript]) {
-        assert.ok(stylesheetImport((await client.transformRequest(id)).code));
-      }
-      return (await fixture.sheet()).replace(/\n/g, '');
+      assert.ok(stylesheetImport((await client.transformRequest(script)).code));
+      return fixture.sheet();
     };
-    assert.equal(
-      await stylesheet(),
-      '@import url(https://example.com/font.css);' +
-        '._syaz5scu{color:red}._font{color:red}._more{color:green}._icon{color:blue}._30l3bf54:hover{color:green}',
-    );
+    assert.equal(await stylesheet(), '._syaz5scu{color:red}._30l3bf54:hover{color:green}');
     await edit(fixture, 'node_modules/ext-lib/index.compiled.css', '._syazbf54{color:green}');
-    await edit(fixture, 'node_modules/ext-fonts/fonts.css', '._font{color:purple}');
-    await eventually(
-      stylesheet,
-      /^@import url\(https:\/\/example\.com\/font\.css\);\._font\{color:purple\}\._more\{color:green\}\._icon\{color:blue\}\._syazbf54\{color:green\}$/,
-    );
+    await eventually(stylesheet, /^\._syazbf54\{color:green\}$/);
   });
 
   it("doesn't take the rules of a file that Vite doesn't serve to browsers", async () => {
