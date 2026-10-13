@@ -225,6 +225,28 @@ describe('the stylesheet', () => {
     );
   });
 
+  it("puts every package's @import before another package's @namespace", async () => {
+    const root = await fixture({
+      'node_modules/ext-a/package.json': `{ "name": "ext-a", "type": "module", "main": "index.js" }`,
+      'node_modules/ext-a/index.js': `import './index.compiled.css';`,
+      'node_modules/ext-a/index.compiled.css': '@namespace svg url(http://www.w3.org/2000/svg);._a{color:blue}',
+      'node_modules/ext-b/package.json': `{ "name": "ext-b", "type": "module", "main": "index.js" }`,
+      'node_modules/ext-b/index.js': `import './index.compiled.css';`,
+      'node_modules/ext-b/index.compiled.css': '@import url(https://e.com/a.css);._b{color:green}',
+      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
+      'src/main.jsx': `import 'ext-a';\nimport 'ext-b';\nexport const Card = () => <p css={{ color: 'red' }} />;`,
+    });
+    const output = await bundle(root);
+    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
+    assert.deepEqual(
+      sheets.map(({ source }) => source.replace(/\n/g, '')),
+      [
+        '@import url(https://e.com/a.css);@namespace svg url(http://www.w3.org/2000/svg);' +
+          '._a{color:blue}._b{color:green}._syaz5scu{color:red}',
+      ],
+    );
+  });
+
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
   const urls = {
     'public/logo.svg': svg,

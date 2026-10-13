@@ -84,6 +84,8 @@ const styleCacheRE = /\/@compiled\/react\/dist\/.+\/style-cache\.js(?:\?|$)/;
 // A url() and its URL, quoted or not, with CSS escapes. Strings and comments match whole, so the
 // url()s in their text don't.
 const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|((?:\\(?:[\da-f]{1,6}\s?|.)|[^\s'"()\\])*))\s*\)/gi;
+// The statements an @import may follow, and the @import itself.
+const importFirstRE = /^@(?:charset|layer|import)\b/i;
 
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
@@ -120,7 +122,11 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
     sheetRules: Iterable<string> = new Set([...rules.values()].flat()),
     // Each package's in their order, and the packages sorted, as they load in no set order.
     sheetStatements: Iterable<string> = new Set(
-      [...statements.keys()].sort().flatMap(id => statements.get(id)!),
+      [...statements.keys()]
+        .sort()
+        .flatMap(id => statements.get(id)!)
+        // Another package's @namespace before an @import would make the @import invalid.
+        .sort((a, b) => Number(!importFirstRE.test(a)) - Number(!importFirstRE.test(b))),
     ),
   ) => [...sheetStatements].join('') + sort([...sheetRules].sort().join(''));
   const setRules = (id: string, newRules: string[], newStatements: string[] = []) => {
