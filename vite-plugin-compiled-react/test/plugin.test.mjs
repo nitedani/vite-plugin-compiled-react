@@ -184,6 +184,30 @@ describe('the stylesheet', () => {
     );
   });
 
+  it("runs the project's PostCSS plugins once on a package's rules", async () => {
+    const root = await fixture({
+      ...packageWithImports,
+      'index.html': `<script type="module" src="/src/main.jsx"></script>`,
+      'src/main.jsx': `import 'ext-fonts';`,
+    });
+    // Like postcss-prefix-selector.
+    const prefix = {
+      postcssPlugin: 'prefix',
+      Rule(rule) {
+        rule.selectors = rule.selectors.map(selector => `.app ${selector}`);
+      },
+    };
+    const output = await bundle(root, { css: { postcss: { plugins: [prefix] } } });
+    const sheets = output.filter(({ fileName }) => fileName.endsWith('.css'));
+    assert.deepEqual(
+      sheets.map(({ source }) => source.replace(/\n/g, '')),
+      [
+        '@import url(https://example.com/font.css);' +
+          '.app ._font{color:red}.app ._more{color:green}.app ._icon{color:blue}',
+      ],
+    );
+  });
+
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
   const urls = {
     'public/logo.svg': svg,

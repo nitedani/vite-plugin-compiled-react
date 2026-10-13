@@ -88,6 +88,8 @@ const cssUrlRE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\burl\(\s
 export function compiled(options: CompiledPluginOptions = {}): Plugin {
   let extract: boolean;
   let resolver: Resolver;
+  // Vite's CSS options without the project's plugins, which run on the whole stylesheet.
+  let importsConfig: ResolvedConfig;
   let server: ViteDevServer | undefined;
   // Atomic rules only cascade right in Compiled's order, which separate stylesheets can't keep, so
   // all extracted rules go into one stylesheet. A module compiled again replaces its rules.
@@ -143,6 +145,10 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           ? options.extract[config.command]
           : (options.extract ?? true);
       resolver = createResolver(config);
+      importsConfig = {
+        ...config,
+        css: { ...config.css, transformer: 'postcss', postcss: { plugins: [] } },
+      };
     },
     configureServer(devServer) {
       server = devServer;
@@ -195,23 +201,16 @@ export function compiled(options: CompiledPluginOptions = {}): Plugin {
           if (!packageStylesheets.has(packageStylesheet)) return;
           this.addWatchFile(packageStylesheet);
           if (server) addDependent(packageStylesheet, id);
-          // Vite inlines the stylesheets it imports, which Compiled's sort would move out of place.
-          const { code, deps = [] } = await preprocessCSS(
-            await readFile(packageStylesheet, 'utf8'),
+          const { rules: sheetRules, deps } = await packageRules(
+            this,
             packageStylesheet,
-            this.environment.config,
+            importsConfig,
           );
           for (const dep of deps) {
             this.addWatchFile(dep);
             if (server) addDependent(dep, id);
           }
-          const { css } = await resolveUrls(this, code, packageStylesheet);
-          // The at-rules without a block that remain, such as an @import of a URL, go first.
-          const root = postcss.parse(css);
-          const statements = [...root.nodes].flatMap(node =>
-            node.type === 'atrule' && !node.nodes ? [`${node.remove()};`] : [],
-          );
-          setRules(id, [...statements, root.toString()]);
+          setRules(id, sheetRules);
           // A build links the stylesheet on every page.
           return server
             ? `import ${JSON.stringify(stylesheetId)};
@@ -431,6 +430,27 @@ async function resolveUrls(
       ),
     );
   return { css: write(file => file), portable: write(file => path.posix.relative(root, file)) };
+}
+
+// A package stylesheet's rules, with the stylesheets it imports inlined in place as Vite inlines
+// them, which Compiled's sort would otherwise move, and the files they come from.
+async function packageRules(
+  context: Pick<Rollup.PluginContext, 'resolve'> & { environment: Environment },
+  file: string,
+  importsConfig: ResolvedConfig,
+) {
+  const { code, deps = [] } = await preprocessCSS(
+    await readFile(file, 'utf8'),
+    file,
+    importsConfig,
+  );
+  const { css } = await resolveUrls(context, code, file);
+  // The at-rules without a block that remain, such as an @import of a URL, go first.
+  const root = postcss.parse(css);
+  const statements = [...root.nodes].flatMap(node =>
+    node.type === 'atrule' && !node.nodes ? [`${node.remove()};`] : [],
+  );
+  return { rules: [...statements, root.toString()], deps };
 }
 
 // Compiled names a class, or keyframes, after the text of the CSS it names, so a URL that resolves
