@@ -444,7 +444,8 @@ async function packageRules(
   importsConfig: ResolvedConfig,
 ) {
   const { code, deps = [] } = await preprocessCSS(
-    await readFile(file, 'utf8'),
+    // After other rules, a byte order mark would become part of the selector that follows it.
+    (await readFile(file, 'utf8')).replace(/^\uFEFF/, ''),
     file,
     importsConfig,
   );

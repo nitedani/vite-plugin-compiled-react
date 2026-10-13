@@ -208,12 +208,12 @@ describe('the stylesheet', () => {
     );
   });
 
-  it("puts a package stylesheet's at-rules without a block first, in their order", async () => {
+  it("puts a package stylesheet's at-rules without a block first, in their order, and drops its byte order mark", async () => {
     const root = await fixture({
       'node_modules/ext-layers/package.json': `{ "name": "ext-layers", "type": "module", "main": "index.js" }`,
       'node_modules/ext-layers/index.js': `import './index.compiled.css';`,
       // The first statement naming a layer sets its priority.
-      'node_modules/ext-layers/index.compiled.css': '@layer b;@layer a;._x{color:blue}',
+      'node_modules/ext-layers/index.compiled.css': '\uFEFF@layer b;@layer a;._x{color:blue}',
       'index.html': `<script type="module" src="/src/main.jsx"></script>`,
       'src/main.jsx': `import 'ext-layers';\nexport const Card = () => <p css={{ color: 'red' }} />;`,
     });
