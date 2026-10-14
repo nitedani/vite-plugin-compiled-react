@@ -10,3 +10,4 @@ package-lock.json
 *.ts.timestamp*
 *Zone.Identifier
 lib
+.fixture-*

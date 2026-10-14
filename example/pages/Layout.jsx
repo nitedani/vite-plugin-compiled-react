@@ -14,7 +14,12 @@ function Layout({ children }) {
           About
         </a>
       </Sidebar>
-      <Content>{children}</Content>
+      <Content>
+        {children}
+        <p id="footer" css={{ color: 'gray', '@media (min-width: 600px)': { color: 'black' } }}>
+          Built with Vike
+        </p>
+      </Content>
     </PageLayout>
   )
 }

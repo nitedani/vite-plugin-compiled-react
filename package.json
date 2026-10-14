@@ -3,6 +3,11 @@
     "private": true,
     "version": "0.0.0",
     "type": "module",
+    "scripts": {
+        "build": "pnpm -r build",
+        "typecheck": "pnpm -r typecheck",
+        "test": "pnpm -r test"
+    },
     "devDependencies": {
         "typescript": "^7.0.2"
     },
